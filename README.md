@@ -1,73 +1,33 @@
-# Keruc — Seatmap Standards
+# Kerusi — Seat Map and Availability Format
 
-Keruc defines seatmap data standards and related tooling for exchanging seating and venue layout information ("seatmaps"). This repository contains the project housekeeping and reference materials for the Keruc Seatmap standards.
+Kerusi (Malay for "chair") is a vendor-neutral, domain-agnostic data format for describing the physical layout of seats and their real-time availability. It's a data format, not a library, protocol, or renderer — any backend (cinema, airline, theatre, stadium, bus, or train booking system) can produce a conformant document, and any renderer (canvas, SVG, DOM grid) can consume one.
 
-## Features
-- Canonical seatmap data model and conventions
-- Example payloads and usage notes
-- Guidance for implementing and validating seatmaps
+This repository holds the specification itself. There is no code, build, or test suite here — just the RFC.
 
-## Quick start
-Clone the repository and browse the documentation:
+## Status
 
-```bash
-git clone https://github.com/ShadAhm/keruc.git
-cd keruc
-```
+**Draft — open for comment.** The current draft is version `1.0.0-draft`, not yet finalized. See [§11 Open Issues](RFC/kerusi-standard_v1.0.0-draft.md#11-open-issues-for-the-10-release) for what's still unresolved before a stable 1.0 release.
 
-## Installation / Prerequisites
-This repository currently contains standards and reference material (markdown, examples). There is no single build system enforced. To work with the repo locally you typically need:
-- git
-- a text editor (VS Code recommended)
-- optional: tooling relevant to your implementation (Node.js, Python, Go, etc.)
+## The spec
 
-## Usage
-See the Examples section below for typical seatmap payloads and usage snippets. If you are developing software that reads or writes Keruc seatmaps, treat the examples as canonical reference data.
+📄 [RFC/kerusi-standard_v1.0.0-draft.md](RFC/kerusi-standard_v1.0.0-draft.md)
 
-### Example seatmap (JSON)
-```json
-{
-  "venue": {
-    "id": "venue-123",
-    "name": "Example Arena"
-  },
-  "seats": [
-    {"id": "A1", "row": "A", "number": 1, "section": "Floor", "x": 12, "y": 34},
-    {"id": "A2", "row": "A", "number": 2, "section": "Floor", "x": 24, "y": 34}
-  ]
-}
-```
+Key ideas covered in the spec:
 
-Adjust fields to match your implementation; this is a minimal illustrative payload.
-
-## Configuration
-If this repository is used alongside a specific implementation (library or service), include configuration details in the implementation's documentation. This README focuses on the standard itself; link implementation-specific docs from the implementation repository.
-
-## Development
-- Open the project in your editor and follow local conventions for your implementation language.
-- If you add examples or validation scripts, keep them under an `examples/` or `tools/` folder and document usage here.
-
-## Tests
-No centralized test runner is included in this repo. If you add validators or format checkers, document their install and run steps here (for example: `npm test`, `pytest`, or `go test`).
+- **Static/dynamic split** — a cacheable `KerusiMap` (layout) is separate from a frequently-updated `KerusiState` (availability), rather than one mutable structure.
+- **Freeform and grid positioning** — seats can be addressed by `row`/`col` or by `x`/`y` coordinates, so curved rows, stadium bowls, and irregular cabin layouts are representable alongside plain grids.
+- **Sections, pricing, seat types, and companion seats** — the structure needed once a layout goes beyond a single room.
+- **`KerusiStateDelta`** for incremental, real-time updates over a push transport (WebSocket, SSE), distinct from a full `KerusiState` snapshot.
+- **Migration notes** from a prior seat-picker implementation, `angularJs.keruC`.
 
 ## Contributing
-Contributions are welcome. To contribute:
-1. Fork the repository and create a feature branch.
-2. Add or update examples/docs under `examples/` or the relevant folder.
-3. Open a pull request with a clear description of the change and rationale.
 
-Please include tests or example payloads when the change affects the standard or adds new fields.
+This is a specification under active draft review. To contribute:
+
+1. Open an issue to discuss a proposed change before drafting spec text for anything non-trivial.
+2. For edits, fork the repository, edit [RFC/kerusi-standard_v1.0.0-draft.md](RFC/kerusi-standard_v1.0.0-draft.md), and open a pull request describing the rationale.
+3. Note any addition in the spec's own §12 Changelog as part of the same change.
 
 ## License
-If a LICENSE file exists in this repository, this project is governed by that license. Otherwise, please add a license file and update this section.
 
-## Examples
-Add real-world examples under `examples/` in the repo. Keep examples small and focused so they can be used as test vectors by implementers.
-
-## Contact
-For questions or coordination about the Keruc standard, open an issue on the repository or contact the maintainers via the GitHub project page.
-
----
-
-Repository README (this file): [README.md](</C:/Users/thisi/Source codes/keruc/README.md>)
- 
+No LICENSE file is currently included in this repository. Treat the specification as all-rights-reserved until one is added.
