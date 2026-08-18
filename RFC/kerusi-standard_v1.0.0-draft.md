@@ -6,7 +6,7 @@
 |---|---|
 | Version | 1.0.0-draft |
 | Status | Draft — open for comment |
-| Date | 2026-08-17 |
+| Date | 2026-08-18 |
 | Editor | Shad |
 
 ---
@@ -27,7 +27,7 @@ This document is the normative specification for Kerusi version 1.0.
 This is a **draft** specification, version `1.0.0-draft`. It is open for
 public comment and subject to change prior to a final 1.0 release. A list
 of open questions that must be resolved before the format is declared
-stable appears in §11. Implementers should treat all interfaces described
+stable appears in §10. Implementers should treat all interfaces described
 here as provisional until the draft status is lifted.
 
 ## Conventions and Terminology
@@ -50,12 +50,11 @@ unless otherwise qualified.
 4. [The KerusiMap Document](#4-the-kerusimap-document)
 5. [The KerusiState and KerusiStateDelta Documents](#5-the-kerusistate-and-kerusistatedelta-documents)
 6. [Examples (Non-Normative)](#6-examples-non-normative)
-7. [Migration from angularJs.keruC (Non-Normative)](#7-migration-from-angularjskeruc-non-normative)
-8. [Conformance](#8-conformance)
-9. [Registration and Interchange Conventions](#9-registration-and-interchange-conventions)
-10. [Security and Privacy Considerations](#10-security-and-privacy-considerations)
-11. [Open Issues for the 1.0 Release](#11-open-issues-for-the-10-release)
-12. [Changelog](#12-changelog)
+7. [Conformance](#7-conformance)
+8. [Registration and Interchange Conventions](#8-registration-and-interchange-conventions)
+9. [Security and Privacy Considerations](#9-security-and-privacy-considerations)
+10. [Open Issues for the 1.0 Release](#10-open-issues-for-the-10-release)
+11. [Changelog](#11-changelog)
 
 ---
 
@@ -68,22 +67,15 @@ grid of selectable things, some of which are unavailable" is
 structurally the same problem in a cinema, an aircraft cabin, a theatre,
 a stadium, a bus, or a train.
 
-`ShadAhm/angularJs.keruC` is a prior seat-picker implementation that
-solved the *rendering* half of this problem. Its data model is:
+Existing seat-picker implementations typically use nested row-based
+models: a top-level list of rows, each holding an array of seat-or-gap
+nodes, where a seat's position is implicit in its slot within that
+array. This works for a straight, rectangular grid, but breaks down the
+moment a layout needs a curved row, an irregular gap, or a section that
+does not fit a grid at all.
 
-```ts
-class SeatsData { rows: Row[] }
-class Row { rowname: string; nodes: Node[] }
-class Node {
-  type: NodeType;        // Void | Seat
-  uniqueName: string;
-  displayName: string;
-  selected: NodeState;   // Vacant | Occupied | Selected
-}
-```
-
-Kerusi generalizes this model in four normative respects, each developed
-fully in the sections that follow:
+Kerusi improves on this pattern in four ways, each developed fully in
+the sections that follow:
 
 1. It **separates layout from availability** into two document types —
    a cacheable `KerusiMap` and a frequently-updated `KerusiState` —
@@ -97,6 +89,10 @@ fully in the sections that follow:
 4. It **supports freeform (x/y) positioning** alongside row/column
    addressing, for curved rows, stadium bowls, and cabin layouts that do
    not fit a strict grid (§4.3).
+
+This makes the format equally usable by a canvas or SVG renderer, a
+booking backend, and a static build-time cache, without any of them
+sharing a single library's internal representation.
 
 ## 2. Design Principles
 
@@ -177,15 +173,14 @@ interface KerusiMap {
 document, and MUST NOT alter required-field validation, on the basis of
 its `domain` value. It exists for tooling and analytics only. (Whether a
 future version elevates `domain` to a normative, schema-selecting field
-is an open question — see §11.)
+is an open question — see §10.)
 
 ### 4.1 Section
 
 A section holds a **flat list of seats**, not a grid of rows containing
-seats. This is the primary structural departure from the
-`angularJs.keruC` model (§7), and is what makes curves, offsets, and
-irregular gaps representable: a seat's position is a property of the
-seat, not a slot in a shared array.
+seats. This is what makes curves, offsets, and irregular gaps
+representable: a seat's position is a property of the seat, not a slot
+in a shared array.
 
 ```ts
 interface Section {
@@ -193,7 +188,7 @@ interface Section {
   label?: string | Record<string, string>;  // String, or locale map:
                                     //   { "en": "Orchestra", "ms": "Orkestra" }.
   index?: number;                 // Display order among sections.
-  layout?: "grid" | "freeform" | "mixed";  // Rendering hint — see §4.3.
+  layout?: "grid" | "freeform" | "mixed";  // Strict positioning constraint — see §4.5.
   aspectRatio?: string;           // "width:height", e.g. "16:9". Meaningful only for
                                     //   freeform/mixed sections. Default: "1:1".
   rows?: RowMeta[];               // Optional row metadata (labels, order). NOT a container.
@@ -246,11 +241,17 @@ interface Seat {
 
 #### 4.3.1 Positioning requirement
 
-A `Seat` MUST specify `col`, or `x` and `y`, or both. A `Seat` MUST NOT
-specify neither. A document is not required to use the same method
-uniformly across a row: a mostly-straight row with one seat displaced
-around a structural obstruction MAY give only that seat `x`/`y`
-coordinates while its neighbours use `col`.
+A `Seat` MUST specify `col`, or `x` and `y`, or both, as required by its
+enclosing `Section.layout` mode — see §4.5 for the normative rule. A
+`Seat` MUST NOT specify neither.
+
+Per-seat mixing of positioning methods (for example, a mostly-straight
+row with one seat displaced around a structural obstruction, giving only
+that seat `x`/`y` coordinates while its neighbours use `col`) is
+permitted only in a section whose `layout` is `"mixed"`, since that mode
+requires *every* seat in the section to carry both `col` and `x`/`y`
+(§4.5). A section that is not declared or inferred as `"mixed"` MUST use
+one positioning method uniformly across all of its seats.
 
 When both `col` and `x`/`y` are present on the same seat, `x`/`y` is
 **authoritative for visual placement**. `col` remains meaningful in that
@@ -304,21 +305,53 @@ interface Element {
 
 ### 4.5 Positioning modes
 
-`Section.layout` is an OPTIONAL rendering hint, not an enforcement rule.
-A consumer MAY use it to decide, without inspecting every seat, whether
-to lay a section out as a CSS grid or to read `x`/`y` coordinates
-directly. If `layout` is omitted, a consumer SHOULD infer it as follows:
-if every seat in the section has `col` and no `x`/`y`, infer `"grid"`;
-if any seat has `x`/`y`, infer `"freeform"` (or `"mixed"` if the section
-contains seats of both kinds).
+`Section.layout` is a **strict, validated constraint**, not a rendering
+hint: every seat in a section MUST conform to that section's declared or
+inferred `layout` mode. This guarantees that two independent renderers
+consuming the same `KerusiMap` produce the same layout, rather than each
+guessing at how to interpret a section's seats from their positional
+fields alone.
+
+There are three modes:
+
+- **`"grid"`** — every seat MUST have `col`. No seat in the section may
+  have `x` or `y`. Because `Section.seats` is a flat, unordered list
+  (§4.1), `col` MUST be given explicitly on every seat — it is never
+  inferred from a seat's position within the array. A seat MAY still
+  carry `row`, as a label (§4.2, §4.3.1).
+- **`"freeform"`** — every seat MUST have both `x` and `y`. No seat in
+  the section may have `col`. A seat MAY still carry a free-text `row`
+  value purely as a label — for grouping or accessibility announcement,
+  e.g. "Row L, seat 1" — since `row` alone carries no positional
+  information and therefore does not participate in this constraint.
+- **`"mixed"`** — every seat MUST have `col` **and** both `x` and `y`.
+  This is the only mode in which a single seat may combine grid and
+  freeform addressing; per §4.3.1, `x`/`y` governs visual placement and
+  `col` remains available for logical adjacency.
+
+If `Section.layout` is omitted, a validator MUST infer it from the
+section's seats:
+
+- If every seat has `col` and no seat has `x` or `y`, the section is
+  inferred as `"grid"`.
+- If every seat has both `x` and `y`, and no seat has `col`, the section
+  is inferred as `"freeform"`.
+- Any other combination is inconsistent — for example, some seats
+  carrying only `col` while others carry only `x`/`y`, or a section
+  where some but not all seats have both. A section with no declared
+  `layout` MUST NOT mix positioning styles across its seats this way; a
+  validator MUST reject such a document (§4.6). Inference never produces
+  `"mixed"` — a section that intentionally requires every seat to carry
+  both `col` and `x`/`y` MUST declare `layout: "mixed"` explicitly.
 
 Placing a seat's position on the seat itself, rather than deriving it
-from the seat's slot in a nested array, removes two constraints present
-in the `angularJs.keruC` pure-grid model: non-seat space no longer
-requires a filler node to hold a column position open, and no seat is
-constrained to share a straight line with its row-mates. Curved rows,
-staggered rows, and a single displaced seat mid-row are all expressible
-as seats with independent `x`/`y` values.
+from the seat's slot in a nested array, is what makes curves, offsets,
+and irregular gaps representable: non-seat space no longer requires a
+filler node to hold a column position open, and no seat is constrained
+to share a straight line with its row-mates. Curved rows, staggered
+rows, and displaced seats are all expressible as seats with independent
+`x`/`y` values, in a section declared or inferred `"freeform"` (or
+`"mixed"`, if some seats in the same section also need grid addressing).
 
 `x` and `y` are always in the range 0–100, but 0–100 of *what shape*
 becomes significant the moment `rotation` or an `Element`'s
@@ -355,6 +388,13 @@ a pair, every member MUST list every other member. A conformant
 validator MUST reject a `companions` set that is not fully mutual. This
 prevents a multi-seat booth from silently ending up partially linked
 because one seat's array drifted out of sync with the others.
+
+`Section.layout` consistency is a related structural-integrity rule: **a
+validator MUST reject any `Section` where seats do not conform to the
+declared or inferred `layout` mode** defined in §4.5. Like a dangling
+reference, a layout-inconsistent section cannot be rendered
+deterministically — different consumers would disagree on how to
+interpret the same seat data.
 
 ### 4.7 SeatType (legend entry)
 
@@ -678,29 +718,7 @@ both reference the same cached `b738-2class-v1` map.
 
 ---
 
-## 7. Migration from `angularJs.keruC` (Non-Normative)
-
-For adapting an existing `keruC` data source to Kerusi:
-
-| keruC | Kerusi |
-|---|---|
-| `SeatsData.rows[]` | `Section.rows[]` — metadata only (labels/order), not a container |
-| `Row.rowname` | `RowMeta.label` |
-| `Row.nodes[]` | *(removed)* — seats reference their row by id via `Seat.row` rather than nesting inside it |
-| `Node.type === Void` | *(removed)* — omit the seat's `col`, or use an `Element` if the gap needs a label |
-| `Node.type === Seat` | entry in `Section.seats[]` |
-| `Node.uniqueName` | `Seat.id` |
-| `Node.displayName` | `Seat.label` |
-| `Node.selected === Occupied` | `KerusiState.seats[id].status === "booked"` |
-| `Node.selected === Vacant` | absent from `KerusiState.seats`, or `"available"` |
-| `Node.selected === Selected` | *(not part of the wire format — client-local UI state)* |
-
-A thin adapter can convert `KerusiMap` + `KerusiState` into the shape
-`<keruc-seatpicker>` already expects, making the existing library a
-Kerusi-compatible renderer without a rewrite — it acquires its data from
-an adapter instead of a bespoke backend format.
-
-## 8. Conformance
+## 7. Conformance
 
 A document claiming conformance to this specification:
 
@@ -719,15 +737,22 @@ A consumer (renderer, validator, or intermediary) is conformant if it:
   (§3);
 - enforces the referential-integrity rules of §4.6, including
   `companions` symmetry;
+- enforces `Section.layout` consistency (§4.5–§4.6), rejecting any
+  section whose seats do not conform to their declared or inferred
+  `layout` mode;
 - applies the price-resolution order of §4.9; and
 - ignores unrecognized members rather than rejecting the document
   because of them (§2).
 
+**Validators MUST enforce `Section.layout` consistency at v1.0** — this
+is not deferred to a future minor version. A `KerusiMap` with a
+layout-inconsistent section is invalid from the first stable release.
+
 A validator implementation SHOULD be published as a JSON Schema per
-version (§9) so that conformance can be checked mechanically rather than
+version (§8) so that conformance can be checked mechanically rather than
 by inspection of this document.
 
-## 9. Registration and Interchange Conventions
+## 8. Registration and Interchange Conventions
 
 - **File extension:** `.kerusi.json` for standalone map, session, state,
   or delta files.
@@ -741,15 +766,14 @@ by inspection of this document.
   without parsing this document by hand.
 - **Suggested package namespaces:** `@kerusi/schema` (JSON Schema plus
   TypeScript types, no runtime dependencies), `@kerusi/react`,
-  `@kerusi/angular` (proposed rename target for `angularJs.keruC` once
-  it consumes this format), `@kerusi/svg-renderer` (a reference
-  renderer, framework-agnostic).
+  `@kerusi/angular`, `@kerusi/svg-renderer` (a reference renderer,
+  framework-agnostic).
 - **Custom fields:** implementation-specific data MUST be placed under
   `metadata`, never as a bare top-level member, to preserve
   forward-compatibility as this specification adds normative fields in
   future revisions.
 
-## 10. Security and Privacy Considerations
+## 9. Security and Privacy Considerations
 
 This specification defines a data format, not a transport or
 authorization mechanism, and takes no position on how a `KerusiMap` or
@@ -765,7 +789,7 @@ a system around this format:
   access-controlled system and use `Seat.id` purely as a foreign key.
 - **`metadata` is an extension point, not a safe default for sensitive
   data.** Because `metadata` is explicitly permitted to carry
-  arbitrary implementation-specific content (§2, §9), and because
+  arbitrary implementation-specific content (§2, §8), and because
   conformant consumers are required to ignore fields they do not
   recognize rather than reject the document, an implementer MUST NOT
   assume `metadata` contents are inspected or filtered by any generic
@@ -783,7 +807,7 @@ a system around this format:
   seat; it does not substitute for authorization checks on who may
   produce or update a `KerusiState`.
 
-## 11. Open Issues for the 1.0 Release
+## 10. Open Issues for the 1.0 Release
 
 The following questions remain unresolved and MUST be settled before
 this specification exits draft status:
@@ -808,8 +832,20 @@ this specification exits draft status:
   delegated to the booking engine, with Kerusi only carrying the
   resulting `holdExpires` timestamp.
 
-## 12. Changelog
+## 11. Changelog
 
+- **1.0.0-draft, rev 9** — `Section.layout` is now a strict, validated
+  constraint rather than a rendering hint (§4.5): a declared or inferred
+  `"grid"`, `"freeform"`, or `"mixed"` mode governs which positional
+  fields every seat in the section MUST and MUST NOT carry, and a
+  validator MUST reject a section whose seats do not conform (§4.6,
+  §7). Per-seat mixing of `col` and `x`/`y` outside a uniform section is
+  now permitted only under an explicit `"mixed"` declaration (§4.3.1).
+  This is a breaking change from rev 1–8 behavior, where `layout` was
+  advisory only. Also removed the former `angularJs.keruC` migration
+  section and the library-specific framing in §1, since this is a spec,
+  not documentation for a specific prior implementation; §8–§11 are
+  renumbered down from §9–§12 as a result.
 - **1.0.0-draft, rev 8** — Added `KerusiSession` (§5.3): a `KerusiMap`
   is now explicitly a reusable physical configuration, and a session is
   the thin, optional join to a specific event/showtime/flight date.
