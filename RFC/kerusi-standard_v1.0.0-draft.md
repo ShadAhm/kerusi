@@ -6,7 +6,7 @@
 |---|---|
 | Version | 1.0.0-draft |
 | Status | Draft — open for comment |
-| Date | 2026-08-18 |
+| Date | 2026-08-19 |
 | Editor | Shad |
 
 ---
@@ -49,6 +49,7 @@ unless otherwise qualified.
 3. [Document Types](#3-document-types)
 4. [The KerusiMap Document](#4-the-kerusimap-document)
 5. [The KerusiState and KerusiStateDelta Documents](#5-the-kerusistate-and-kerusistatedelta-documents)
+   - [5.4 Multi-leg and Multi-day Bookings (Non-Normative)](#54-multi-leg-and-multi-day-bookings-non-normative)
 6. [Examples (Non-Normative)](#6-examples-non-normative)
 7. [Conformance](#7-conformance)
 8. [Registration and Interchange Conventions](#8-registration-and-interchange-conventions)
@@ -124,6 +125,17 @@ specific rule governs.
   locale, consistent with the practice of other interchange formats such
   as JSON:API and OpenAPI. Human-facing label values MAY be localized
   (§4.2).
+- **Reading direction is a rendering concern.** `Seat.col` is an abstract
+  adjacency ordinal — "this seat is next to that one" — not a guarantee of
+  left-to-right screen position, the same way `x`/`y` coordinates carry no
+  assumption about which edge of the canvas is "first." A consumer
+  rendering for a right-to-left locale reverses the visual order in which
+  it lays out ascending `col` values (or mirrors `x`), while adjacency and
+  navigation order are unaffected, because nothing in this specification
+  ties `col` to a screen direction. `KerusiMap.locale` (§4) is the existing
+  hint a consumer uses to choose a rendering direction; no separate
+  RTL-specific field is needed, consistent with this format defining no
+  rendering technology.
 
 ## 3. Document Types
 
@@ -234,7 +246,8 @@ interface Seat {
   companions?: string[];           // ids of other seats that must be booked together
                                      //   (couple/sofa seats, family bays).
   attributes?: string[];           // Free tags: "aisle" | "window" | "extra-legroom"
-                                     //   | "wheelchair" | ... . Non-exclusive.
+                                     //   | ... . Non-exclusive.
+  accessibility?: Accessibility;   // Structured accessibility properties (§4.3.4).
   metadata?: Record<string, unknown>;
 }
 ```
@@ -277,6 +290,35 @@ zero or more non-exclusive descriptive tags (e.g. `"aisle"`, `"window"`,
 `"exit-row"`) that MUST NOT independently affect price. If a category of
 seat requires its own price point, it MUST be modeled as a distinct
 `SeatType`, not as an `attribute`.
+
+#### 4.3.4 Accessibility
+
+A free-text `attributes` tag such as `"wheelchair"` can flag a seat as
+accessible in some sense, but cannot express *which* sense — a wheelchair
+user may need to know specifically whether a seat's armrest lifts for a
+lateral transfer, or whether the space is reachable by aisle chair,
+independently of whether it needs to be booked alongside a companion seat.
+These are distinct, structured needs that a single free-text tag cannot
+carry without implementers inventing incompatible tag vocabularies. `Seat`
+therefore accepts an optional structured `accessibility` object:
+
+```ts
+interface Accessibility {
+  wheelchairAccessible?: boolean;   // Seat or space usable by a wheelchair user.
+  transferArmrest?: "left" | "right" | "both" | "fixed" | "none";
+  aisleChairCompatible?: boolean;   // Reachable via aisle-chair transfer.
+  companionRequired?: boolean;      // Occupant is expected to need an adjacent
+                                      //   companion seat. Pair with Seat.companions
+                                      //   (§4.6) to link the actual companion seat.
+}
+```
+
+All members are OPTIONAL, consistent with the progressive-enhancement
+principle (§2): a map with no accessibility needs to express simply omits
+`accessibility` on every seat. The free-text `"wheelchair"` `attributes`
+tag remains valid for simple cases and MUST NOT be rejected, but
+`accessibility.wheelchairAccessible` is the structured, machine-checkable
+source of truth when both are present on the same seat.
 
 ### 4.4 Element
 
@@ -478,6 +520,15 @@ a broken seat, a staff hold, a roped-off row — and is distinct from
 `"booked"` (sold) and `"held"` (temporarily reserved during an
 in-progress checkout, e.g. held in a cart for a bounded interval).
 
+This specification intentionally does not define hold *duration*,
+extension, queueing, or how a race between two shoppers for the same
+`"held"` seat is resolved. Those policies differ too much by domain — a
+cart timeout, a contact-center-mediated hold, and a waitlist all behave
+differently — to standardize usefully without excluding legitimate
+booking-engine designs. Kerusi's role is limited to carrying the
+resulting `holdExpires` timestamp, which is sufficient for any renderer
+to show a consistent countdown regardless of what policy produced it.
+
 ### 5.2 KerusiStateDelta — incremental updates
 
 `KerusiState`'s sparse convention (absence implies `"available"`) is
@@ -510,6 +561,16 @@ by `updatedAt`. A consumer that detects a gap in `updatedAt` sequencing,
 or receives an out-of-order delta, SHOULD discard its accumulated state
 and re-fetch a full `KerusiState` rather than risk silent drift.
 
+This discard-and-refetch rule is the mechanism that *prevents* silent
+drift, not a residual risk of the delta model: an accumulate-forever
+consumer with no gap detection is the version of this design that would
+drift silently, and this specification does not define that version. A
+producer SHOULD nonetheless keep gaps rare in practice — for example by
+sending periodic heartbeat deltas (an empty or no-op `changes` object
+with an advancing `updatedAt`) and by keeping `updatedAt` strictly
+monotonic per session/map per connection — since every discard-and-refetch
+costs a full snapshot round-trip even though it is always safe.
+
 ### 5.3 KerusiSession — reusing a map across events
 
 A `KerusiMap` describing "Hall A" or a two-class 737-800 configuration
@@ -539,6 +600,29 @@ entirely OPTIONAL: an application with a genuine one-map-one-event
 relationship (a single permanent exhibit, a fixed office floor plan) MAY
 omit `KerusiSession` and have `KerusiState` reference `mapId` directly
 (§6.4).
+
+### 5.4 Multi-leg and Multi-day Bookings (Non-Normative)
+
+A connecting flight and a season ticket both feel, from a shopper's
+perspective, like a single booking that spans multiple maps or multiple
+dates. This specification deliberately does not add a construct for
+that: each leg of an itinerary, and each date of a season, is its own
+physical configuration and its own event — a connecting flight's two
+legs may well use different airframes, and a stadium's Tuesday game and
+Saturday game are different `KerusiSession`s over the same `KerusiMap`.
+Modeling either case as a single map or a single session with a validity
+range would conflate data that is structurally independent (seat layout
+per leg/venue) with data that is structurally repeated (occupancy per
+event), and would break the "rarely changes, cacheable" property that
+makes `KerusiMap` reusable in the first place (§3).
+
+A multi-leg or multi-day booking is therefore represented as multiple
+ordinary `KerusiSession`/`KerusiState` pairs — one per leg or date, each
+exactly as described in §5.1–§5.3 — correlated by the booking engine's
+own itinerary or season-ticket record. Kerusi has no opinion on, and
+carries no data about, that correlation; it is scoped to describing one
+physical configuration and its occupancy at a time, the same way a
+`KerusiMap` has no opinion on which airline or venue produced it.
 
 ---
 
@@ -605,6 +689,10 @@ sold as a single unit.
       "seats": [
         { "id": "A1", "label": "1", "row": "A", "x": 20, "y": 20, "rotation": -5, "type": "standard" },
         { "id": "A2", "label": "2", "row": "A", "x": 26, "y": 19, "rotation": -3, "type": "standard" },
+        {
+          "id": "A3", "label": "3", "row": "A", "x": 32, "y": 19, "rotation": -3, "type": "standard",
+          "accessibility": { "wheelchairAccessible": true, "transferArmrest": "left", "aisleChairCompatible": true }
+        },
         {
           "id": "L1", "label": "1", "row": "L", "x": 60, "y": 70,
           "type": "recliner-couple", "companions": ["L2"]
@@ -752,6 +840,19 @@ A validator implementation SHOULD be published as a JSON Schema per
 version (§8) so that conformance can be checked mechanically rather than
 by inspection of this document.
 
+Rejecting a document with a dangling `row`/`type`/`priceTier`/`companions`
+reference, or a layout-inconsistent section (§4.6), is deliberately
+strict rather than lenient: silently dropping or mis-pricing the affected
+seat instead would hide a producer/consumer sync bug behind a
+customer-facing symptom, at exactly the point where it is most expensive
+to diagnose. This specification does not relax that rule, but
+implementers are not required to discover it at render time — a producer
+SHOULD validate a `KerusiMap` before publishing it (e.g. in CI, against
+the JSON Schema above), and a gateway or intermediary SHOULD treat a
+validation failure as an alertable condition rather than degrade
+silently, so that referential or layout drift is caught long before it
+reaches a renderer.
+
 ## 8. Registration and Interchange Conventions
 
 - **File extension:** `.kerusi.json` for standalone map, session, state,
@@ -800,7 +901,12 @@ a system around this format:
   information — for example, purchasing velocity or the size of a
   travelling party inferable from `companions`. Systems exposing a
   public real-time feed should consider whether that inference is
-  acceptable for the domain.
+  acceptable for the domain. Where it is not, mitigation is a
+  deployment-layer decision this specification does not mandate but
+  implementers should weigh: aggregating or batching transitions instead
+  of streaming each one individually, rate-limiting public polling
+  endpoints, and requiring authentication on a real-time `KerusiStateDelta`
+  feed rather than exposing it to anonymous consumers.
 - **Referential-integrity validation (§4.6) is a data-quality control,
   not a security boundary.** Rejecting a document with a dangling
   reference prevents a renderer from mis-pricing or silently dropping a
@@ -812,28 +918,56 @@ a system around this format:
 The following questions remain unresolved and MUST be settled before
 this specification exits draft status:
 
-- **Multi-leg/multi-day bookings.** A flight with a connection, or a
-  season-ticket seat spanning many games: should this be modeled as one
-  map with a `validFor` range, or as separate maps entirely?
-- **Accessibility.** Is `"wheelchair"` as a free-text `attributes` tag
-  sufficient, or does accessibility require first-class fields —
-  companion-seat requirements, transfer-armrest presence, aisle-chair
-  access?
 - **Labelled gaps.** Should `Element` gain a dedicated `"gap"`/`"aisle"`
   convention beyond a free-text `kind`, for recurring cases like
   "STAIRS" printed mid-row?
-- **Right-to-left row direction**, for locales where seat numbering
-  runs in the opposite direction from the examples in this document.
 - **Normative status of `domain`.** Whether `domain` (§4) remains purely
   informational, or whether a future revision uses it to select
   domain-specific required fields.
-- **Hold/expiry semantics.** Whether hold-expiry behavior (§5.1) should
-  be normatively defined by this specification, or remain entirely
-  delegated to the booking engine, with Kerusi only carrying the
-  resulting `holdExpires` timestamp.
+
+Four items previously listed here have been resolved as of rev 10 (§11)
+rather than left open indefinitely: multi-leg/multi-day bookings
+(resolved out of scope by design, §5.4), accessibility (resolved with
+`Seat.accessibility`, §4.3.4), right-to-left row direction (resolved as
+a rendering concern with no data-model change, §2), and hold/expiry
+semantics (resolved as intentionally delegated to the booking engine,
+§5.1).
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 10** — Reviewed every item raised against the draft
+  and resolved four, rather than adding fields reflexively:
+  - Added `Seat.accessibility` (§4.3.4): structured
+    `wheelchairAccessible`, `transferArmrest`, `aisleChairCompatible`, and
+    `companionRequired` fields, since a free-text `"wheelchair"` tag
+    cannot express which accessibility need applies. The free-text tag
+    remains valid for simple cases.
+  - Added §5.4, resolving multi-leg/multi-day bookings as explicitly
+    out of scope: each leg or date is its own `KerusiSession`/
+    `KerusiState` pair, correlated by the booking engine, not by Kerusi.
+  - Resolved right-to-left row direction as a rendering concern requiring
+    no data-model change (§2): `col` is an adjacency ordinal, not a
+    screen-direction guarantee, and `locale` already carries the
+    necessary hint.
+  - Resolved hold/expiry semantics (§5.1) as intentionally delegated to
+    the booking engine; Kerusi carries only the resulting `holdExpires`
+    timestamp.
+  - Reframed `KerusiStateDelta` gap-handling (§5.2) as the drift
+    *prevention* mechanism rather than a residual risk, and added a
+    non-normative heartbeat recommendation to keep gaps rare.
+  - Added non-normative guidance: validate-before-publish and alert-on-
+    validation-failure recommendations for the existing strict
+    referential-integrity and layout-consistency rules (§7); public
+    real-time feed mitigation options for activity-leakage risk (§9).
+  - The "mixed" layout requiring every seat to carry both `col` and
+    `x`/`y` (raised as a complexity concern) is not changed here: rev 9
+    (below) already made this an intentional, justified strictness
+    trade-off — deterministic cross-renderer layout in exchange for
+    some per-seat data overhead — mirroring the referential-integrity
+    rationale above.
+  - Single-currency-per-map (§4.9) and `metadata` handling (§9) were
+    reviewed and kept unchanged — both were already correctly scoped.
+  - §10 now lists two open issues instead of six.
 - **1.0.0-draft, rev 9** — `Section.layout` is now a strict, validated
   constraint rather than a rendering hint (§4.5): a declared or inferred
   `"grid"`, `"freeform"`, or `"mixed"` mode governs which positional
