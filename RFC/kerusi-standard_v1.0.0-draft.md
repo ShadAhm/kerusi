@@ -6,7 +6,7 @@
 |---|---|
 | Version | 1.0.0-draft |
 | Status | Draft — open for comment |
-| Date | 2026-08-19 |
+| Date | 2026-08-21 |
 | Editor | Shad |
 
 ---
@@ -204,6 +204,7 @@ interface Section {
   aspectRatio?: string;           // "width:height", e.g. "16:9". Meaningful only for
                                     //   freeform/mixed sections. Default: "1:1".
   rows?: RowMeta[];               // Optional row metadata (labels, order). NOT a container.
+  directions?: Direction[];       // Optional human-facing axis labels — see §4.10.
   seats: Seat[];                  // REQUIRED. Flat list; order is not significant.
   elements?: Element[];           // Non-bookable features: screens, stages, aisles, stairs.
   metadata?: Record<string, unknown>;
@@ -483,6 +484,61 @@ A `KerusiMap` MUST NOT mix currencies across seats; exactly one
 `currency` value applies to the whole map. Conversion into a shopper's
 local currency is a presentation-layer concern, performed at render
 time, and is out of scope for this specification.
+
+### 4.10 Direction labels (optional)
+
+`Seat` already addresses a seat along up to four axes: `row`, `col`,
+`x`, and `y` (§4.3). None of these carry any inherent real-world
+meaning beyond adjacency and position — `col: 4` is simply "next to
+`col: 3`," the same way `Section.layout` deliberately says nothing about
+which edge of the screen is "first" (§2). Some domains nonetheless have
+a genuine physical or geographic direction associated with one or more
+of these axes that is useful to surface to a shopper or to
+domain-specific tooling: which end of a train a row is closer to, or
+which compass direction a block of stadium or open-air seating faces
+(relevant for sun and lighting). `Section.directions` is an OPTIONAL,
+purely descriptive way to attach that meaning, without requiring it:
+
+```ts
+interface Direction {
+  axis: "row" | "col" | "x" | "y";  // REQUIRED. Which addressing axis (§4.3)
+                                       //   this label pair describes.
+  low: string | Record<string, string>;   // REQUIRED. Label for the low end —
+                                             //   ascending row/col order starting
+                                             //   from the section's first row/col,
+                                             //   or x/y = 0.
+  high: string | Record<string, string>;  // REQUIRED. Label for the high end —
+                                             //   descending row/col order, or
+                                             //   x/y = 100.
+}
+```
+
+For `axis: "row"`, "low" and "high" refer to the direction of increasing
+`RowMeta.index` (or declaration order in `Section.rows`, when `index` is
+absent); for `axis: "col"`, to increasing `col` values. Both are
+consistent with the row/col ordering already defined in §4.2–§4.3 — no
+new ordering concept is introduced.
+
+A section MAY declare a `Direction` for as many or as few of the four
+axes as are physically meaningful — a train carriage typically only
+labels one (`row`, "front of train" / "back of train"), while an
+open-air court or stand may label two (`x`, "west" / "east"; `y`,
+"south" / "north"). A section with no relevant real-world direction
+simply omits `directions` entirely, consistent with the
+progressive-enhancement principle (§2).
+
+`directions` is **non-normative and purely informational**: like
+`KerusiMap.domain` (§4), it MUST NOT be used by a validator to reject a
+document, and it MUST NOT be relied upon by a renderer to decide layout
+or screen placement. In particular, it does not reopen or modify the
+rendering-direction principle of §2 — a `Direction` label describes what
+an axis *means* in the physical world (which end faces which way), not
+which edge of the screen a consumer draws it on; that mapping remains
+entirely a rendering decision, exactly as it already is for `col` and
+`x`/`y` without any `Direction` present. Two conformant renderers may
+therefore agree on every `Direction` label in a document while still
+choosing to draw the section mirrored relative to one another, and both
+remain conformant.
 
 ---
 
@@ -804,6 +860,45 @@ occupancy differs:
 Tomorrow's MH123 receives its own `KerusiSession` and `KerusiState`, but
 both reference the same cached `b738-2class-v1` map.
 
+### 6.6 Direction labels (train and tennis court)
+
+The train's rows run front-to-back; only one axis is physically
+meaningful. A tennis court's seating faces the court from all sides, so
+both spatial axes carry a compass direction relevant to sun and
+lighting:
+
+```json
+{
+  "id": "coach-b",
+  "layout": "grid",
+  "rows": [
+    { "id": "1", "index": 0 },
+    { "id": "2", "index": 1 }
+  ],
+  "directions": [
+    { "axis": "row", "low": "front of train", "high": "back of train" }
+  ],
+  "seats": [
+    { "id": "1A", "row": "1", "col": 1, "type": "standard" },
+    { "id": "2A", "row": "2", "col": 1, "type": "standard" }
+  ]
+}
+```
+
+```json
+{
+  "id": "court1-east-stand",
+  "layout": "freeform",
+  "directions": [
+    { "axis": "x", "low": "west", "high": "east" },
+    { "axis": "y", "low": "south", "high": "north" }
+  ],
+  "seats": [
+    { "id": "E1", "x": 10, "y": 50, "type": "standard" }
+  ]
+}
+```
+
 ---
 
 ## 7. Conformance
@@ -935,6 +1030,15 @@ semantics (resolved as intentionally delegated to the booking engine,
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 11** — Added `Section.directions` (§4.10): an
+  OPTIONAL, non-normative way to attach a human-facing label to one or
+  more of a section's four addressing axes (`row`, `col`, `x`, `y`) —
+  "front of train" / "back of train" for a vehicle whose rows run in a
+  physical direction, or compass directions for open-air seating where
+  sun and lighting depend on orientation. A section that has no such
+  real-world direction simply omits it. This does not reopen the §2
+  rendering-direction principle: a `Direction` label describes what an
+  axis means physically, not which screen edge a renderer draws it on.
 - **1.0.0-draft, rev 10** — Reviewed every item raised against the draft
   and resolved four, rather than adding fields reflexively:
   - Added `Seat.accessibility` (§4.3.4): structured
