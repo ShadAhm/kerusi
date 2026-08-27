@@ -203,7 +203,8 @@ interface Section {
   layout?: "grid" | "freeform" | "mixed";  // Strict positioning constraint — see §4.5.
   aspectRatio?: string;           // "width:height", e.g. "16:9". Meaningful only for
                                     //   freeform/mixed sections. Default: "1:1".
-  rows?: RowMeta[];               // Optional row metadata (labels, order). NOT a container.
+  rows?: RowMeta[];               // Optional row registry (labels, order, empty rows).
+                                    //   NOT a container — see §4.2.
   directions?: Direction[];       // Optional human-facing axis labels — see §4.10.
   seats: Seat[];                  // REQUIRED. Flat list; order is not significant.
   elements?: Element[];           // Non-bookable features: screens, stages, aisles, stairs.
@@ -215,19 +216,70 @@ interface Section {
 
 `RowMeta` is purely descriptive: a place to attach a label, a display
 order, or row-level metadata (for example, "this row is
-wheelchair-accessible"). It is **not** an array that seats live inside.
-A `RowMeta` entry is entirely OPTIONAL — a seat MAY carry a free-text
-`row` value with no corresponding `RowMeta` declared, if localized
-labels or explicit ordering are not required.
+wheelchair-accessible"). It is **not** an array that seats live inside —
+seats remain in the section's flat `seats` list (§4.1), and a row does
+not own them.
+
+`Section.rows` as a whole is OPTIONAL. A section MAY omit it entirely, in
+which case a seat's `row` is an opaque free-text label and the section's
+rows are exactly those its seats reference (§4.6). When `rows` **is**
+present, it is the section's **complete, ordered row registry**: §4.6
+already requires every `Seat.row` to resolve against it, so no seat can
+occupy a row the registry does not declare, and the registry therefore
+defines the section's rows rather than merely annotating them.
 
 ```ts
 interface RowMeta {
   id: string;                    // REQUIRED.
   label?: string;
-  index?: number;                 // Display order among rows in the section.
+  index?: number;                 // Ordering key among rows in the section (§4.2.1).
+                                    //   An ordering key, not a position.
   metadata?: Record<string, unknown>;
 }
 ```
+
+#### 4.2.1 Row order
+
+Where a section declares `rows`, its rows are ordered as follows, and two
+conformant consumers MUST derive the same order from the same document:
+
+1. Rows declaring `index` come first, sorted by `index` ascending.
+2. Rows with no `index` follow, in declaration order.
+3. Rows sharing an `index` keep their declaration order relative to one
+   another.
+
+`index` is an **ordering key, not a position**. Rows declared at `index`
+0 and `index` 11 with nothing between them are adjacent — two rows, not
+twelve — and renumbering every row in a section changes nothing about its
+layout. Vertical space is expressed by declaring a row (§4.2.2), never by
+leaving a numeric hole in `index`.
+
+If any row in a section declares `index`, every row in that section
+SHOULD declare one. A partially indexed set is still deterministic under
+the rule above, but is harder for a human to read.
+
+#### 4.2.2 Empty rows
+
+A `RowMeta` that no seat references is an **empty row**. It is valid, and
+it still occupies a slot in the section's row order: an empty row
+reserves the vertical space that one row of seats would occupy.
+
+This is the row-axis counterpart to a skipped column (§4.3.2). It is how
+a grid-addressed section expresses space **above its first row** — the
+throw between a cinema screen and row A — and space **between two rows** —
+a cross-aisle, a barrier, a step. An `Element` that needs to occupy that
+space is positioned in the empty row like any other row-addressed element
+(§4.4.1); §6.7 works the case end to end.
+
+An empty row reserves space in a `"grid"` section, and for row-addressed
+elements in a `"mixed"` one. In a `"freeform"` section every position
+comes from `x`/`y` (§4.5), so an empty row reserves nothing there; it
+remains valid as a declared label, and a validator MUST NOT reject it.
+
+Empty rows are whole rows. Reserving a fraction of a row's height is a
+rendering concern this specification does not address, consistent with
+§2: a document states how many rows of space are reserved, and a renderer
+decides what a row is worth in pixels.
 
 ### 4.3 Seat
 
@@ -282,6 +334,14 @@ there is nothing to fill in the first place: seats that do not exist are
 simply absent from `seats`. A gap that requires a visible label (for
 example, "STAIRS," a marked wheelchair bay, or a deliberately wide
 aisle) MUST instead be represented as an `Element` (§4.4).
+
+The row axis carries the same vocabulary, with one asymmetry that follows
+from the data model rather than from a gap in it: columns are *numbered*,
+so an unoccupied column is expressed by omitting its number, whereas rows
+are *named* (`RowMeta.id`), so there is no skipped row number to leave
+out. An unoccupied row is therefore expressed by **declaring** it and
+giving it no seats (§4.2.2). Both axes then offer the same two options —
+space that is merely absent, and labelled space that is an `Element`.
 
 #### 4.3.3 `type` versus `attributes`
 
@@ -346,6 +406,39 @@ interface Element {
 }
 ```
 
+#### 4.4.1 Element positioning and sizing
+
+An `Element` is subject to the same strict positioning constraint as its
+section's seats (§4.5), for the same reason: a section whose elements may
+be addressed differently from its seats cannot be laid out
+deterministically by two independent renderers.
+
+- In a `"grid"` section, an `Element` MUST be positioned by `row` and/or
+  `col`, and MUST NOT carry `x` or `y`.
+- In a `"freeform"` section, an `Element` MUST be positioned by `x` and
+  `y`, and MUST NOT carry `col`. It MAY still carry `row` as a label.
+- In a `"mixed"` section, an `Element` MAY use either; where both are
+  present, `x`/`y` governs visual placement (§4.3.1).
+
+`width` and `height` are interpreted according to that same mode:
+
+- **Grid.** `width` is a **column span** and `height` is a **row span**,
+  both counted in cells from the element's `col` and `row`. Each MUST be
+  a positive integer, and each defaults to `1`. An element with
+  `height: 3` occupies its own row plus the two rows following it in the
+  section's row order (§4.2.1) — ordinarily empty rows declared for that
+  purpose (§4.2.2). If `col` is omitted, the element spans the section's
+  full column extent and `width` is ignored; this is the usual form for a
+  screen or a stage.
+- **Freeform.** `width` and `height` are percentages of the section's
+  width and height on the canvas whose proportions `Section.aspectRatio`
+  fixes (§4.5), matching the percentage interpretation of `x` and `y`.
+
+Grid spans are **dimensionless cell counts**, exactly as `col` is. Giving
+them a normative meaning does not give grid mode geometry and does not
+qualify the renderer-agnostic principle of §2: a document says how many
+cells an element occupies, and a renderer decides what a cell measures.
+
 ### 4.5 Positioning modes
 
 `Section.layout` is a **strict, validated constraint**, not a rendering
@@ -361,7 +454,8 @@ There are three modes:
   have `x` or `y`. Because `Section.seats` is a flat, unordered list
   (§4.1), `col` MUST be given explicitly on every seat — it is never
   inferred from a seat's position within the array. A seat MAY still
-  carry `row`, as a label (§4.2, §4.3.1).
+  carry `row`; in a grid section `row` is not merely a label, since it
+  places the seat on the row axis in the order defined by §4.2.1.
 - **`"freeform"`** — every seat MUST have both `x` and `y`. No seat in
   the section may have `col`. A seat MAY still carry a free-text `row`
   value purely as a label — for grouping or accessibility announcement,
@@ -403,8 +497,10 @@ render at a visually different angle once stretched onto a 2:1 hall.
 `Section.aspectRatio` (`"width:height"`, e.g. `"16:9"`) fixes the
 canvas's proportions so that percentage coordinates, rotation degrees,
 and element sizing carry consistent meaning regardless of the venue's
-actual proportions. It defaults to `"1:1"` when omitted, and has no
-effect on grid-addressed seats.
+actual proportions. It defaults to `"1:1"` when omitted. It has no
+effect on grid-addressed seats, nor on the grid `width`/`height` spans of
+§4.4.1, which are dimensionless cell counts; it governs percentage-based
+positions and percentage-based element sizing only.
 
 ### 4.6 Referential integrity
 
@@ -414,6 +510,7 @@ document:
 | Field | Resolves against |
 |---|---|
 | `Seat.row` | `RowMeta.id`, when `Section.rows` is present |
+| `Element.row` | `RowMeta.id`, when `Section.rows` is present |
 | `Seat.type` | `SeatType.id` in `KerusiMap.legend` |
 | `Seat.priceTier` | `PriceTier.id` in `KerusiMap.priceTiers` |
 | `Seat.companions[]` | other `Seat.id` values within the same section |
@@ -422,8 +519,8 @@ A document in which any of these references fails to resolve is
 **invalid**. A conformant validator MUST reject such a document rather
 than allow a renderer to silently drop or mis-price the affected seat.
 The sole exception is `row`: if a section declares no `rows` array at
-all, `Seat.row` is treated as an opaque free-text label with nothing to
-resolve against, and is always valid.
+all, `Seat.row` and `Element.row` are treated as opaque free-text labels
+with nothing to resolve against, and are always valid.
 
 `companions` references MUST be **symmetric**: if seat A lists seat B in
 `companions`, seat B MUST list seat A in return; for a group larger than
@@ -438,6 +535,15 @@ declared or inferred `layout` mode** defined in §4.5. Like a dangling
 reference, a layout-inconsistent section cannot be rendered
 deterministically — different consumers would disagree on how to
 interpret the same seat data.
+
+Elements are validated on the same footing. A validator MUST reject an
+`Element` whose positioning fields do not match its section's layout mode
+(§4.4.1), and, in a `"grid"` section, an `Element` whose `width` or
+`height` is not a positive integer, or whose row span extends past the
+last row in the section's row order (§4.2.1). Each of these would
+otherwise leave two renderers to disagree about where an element sits or
+how much space it occupies — the element-side equivalent of the seat rule
+above.
 
 ### 4.7 SeatType (legend entry)
 
@@ -515,9 +621,9 @@ interface Direction {
 
 For `axis: "row"`, "low" and "high" refer to the direction of increasing
 `RowMeta.index` (or declaration order in `Section.rows`, when `index` is
-absent); for `axis: "col"`, to increasing `col` values. Both are
-consistent with the row/col ordering already defined in §4.2–§4.3 — no
-new ordering concept is introduced.
+absent) — the row order of §4.2.1; for `axis: "col"`, to increasing `col`
+values. Both are consistent with the row/col ordering already defined in
+§4.2–§4.3 — no new ordering concept is introduced.
 
 A section MAY declare a `Direction` for as many or as few of the four
 axes as are physically meaningful — a train carriage typically only
@@ -899,6 +1005,67 @@ lighting:
 }
 ```
 
+### 6.7 Grid cinema with screen headroom
+
+The cinema in §6.2 is freeform, where vertical space costs nothing: the
+screen sits at `y: 2` and row A at `y: 19`. This is the same kind of room
+addressed as a grid, where space has to be declared. Four rows carry no
+seats — `screen-1` and `screen-2` hold the screen, `throw` is the gap
+between the screen and the front row, and `cross-aisle` is a walkway
+between rows B and C. Column 3 is the centre aisle, omitted as in §6.1.
+
+```json
+{
+  "kerusi": "1.0",
+  "id": "cinema3-hallB",
+  "name": "Hall B",
+  "domain": "cinema",
+  "legend": [
+    { "id": "standard", "label": "Standard", "defaultPriceTier": "regular" }
+  ],
+  "priceTiers": [
+    { "id": "regular", "price": { "amount": 1500, "currency": "MYR" } }
+  ],
+  "sections": [
+    {
+      "id": "stalls",
+      "layout": "grid",
+      "rows": [
+        { "id": "screen-1", "index": 0 },
+        { "id": "screen-2", "index": 1 },
+        { "id": "throw", "index": 2 },
+        { "id": "A", "label": "A", "index": 3 },
+        { "id": "B", "label": "B", "index": 4 },
+        { "id": "cross-aisle", "index": 5 },
+        { "id": "C", "label": "C", "index": 6 }
+      ],
+      "elements": [
+        {
+          "id": "screen", "kind": "screen", "label": "SCREEN",
+          "row": "screen-1", "height": 2
+        }
+      ],
+      "seats": [
+        { "id": "A1", "label": "1", "row": "A", "col": 1, "type": "standard" },
+        { "id": "A2", "label": "2", "row": "A", "col": 2, "type": "standard" },
+        { "id": "A3", "label": "3", "row": "A", "col": 4, "type": "standard" },
+        { "id": "B1", "label": "1", "row": "B", "col": 1, "type": "standard" },
+        { "id": "B2", "label": "2", "row": "B", "col": 2, "type": "standard" },
+        { "id": "B3", "label": "3", "row": "B", "col": 4, "type": "standard" },
+        { "id": "C1", "label": "1", "row": "C", "col": 1, "type": "standard" }
+      ]
+    }
+  ]
+}
+```
+
+Every row above is a real row: a consumer materializes seven of them in
+`index` order, four with no seats (§4.2.2). The screen occupies the first
+two because `height: 2` is a row span, and it spans the full width of the
+section because `col` is omitted (§4.4.1). None of this is a renderer
+setting — the same document produces the same vertical arrangement in any
+conformant renderer.
+
 ---
 
 ## 7. Conformance
@@ -923,6 +1090,10 @@ A consumer (renderer, validator, or intermediary) is conformant if it:
 - enforces `Section.layout` consistency (§4.5–§4.6), rejecting any
   section whose seats do not conform to their declared or inferred
   `layout` mode;
+- materializes every row a section declares, including rows no seat
+  references, in the order defined by §4.2.1 (§4.2.2);
+- enforces the element positioning and sizing rules of §4.4.1, including
+  grid span integrality and row-span bounds (§4.6);
 - applies the price-resolution order of §4.9; and
 - ignores unrecognized members rather than rejecting the document
   because of them (§2).
@@ -1015,7 +1186,10 @@ this specification exits draft status:
 
 - **Labelled gaps.** Should `Element` gain a dedicated `"gap"`/`"aisle"`
   convention beyond a free-text `kind`, for recurring cases like
-  "STAIRS" printed mid-row?
+  "STAIRS" printed mid-row? Rev 12 settled what an `Element` may do with
+  space — its `width`/`height` units are now normative in both modes
+  (§4.4.1) — so what remains open here is the `kind` vocabulary, not the
+  geometry underneath it.
 - **Normative status of `domain`.** Whether `domain` (§4) remains purely
   informational, or whether a future revision uses it to select
   domain-specific required fields.
@@ -1030,6 +1204,37 @@ semantics (resolved as intentionally delegated to the booking engine,
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 12** — Made the grid axis vocabulary symmetric, so a
+  grid-addressed section can express vertical space. A `RowMeta` that no
+  seat references is now an **empty row** occupying a slot in the
+  section's row order (§4.2.2) — which is what reserves the throw between
+  a cinema screen and its front row, or a cross-aisle between two rows.
+  Previously a grid section could address space on the column axis (a
+  skipped `col`, §4.3.2) and not on the row axis at all, so §4.3.2 could
+  mandate an `Element` for labelled space that grid mode gave that
+  `Element` nowhere to occupy. §4.2.1 states the row-ordering rule this
+  depends on, and restates that `index` is an ordering key, not a
+  position. Grid `Element.width`/`height` — previously undefined units, an
+  independent interop hole in the same paragraph — are now normatively
+  **column and row spans** (§4.4.1), and an `Element` is now bound to its
+  section's positioning mode exactly as its seats are (§4.4.1, §4.6),
+  closing a cross-mode placement the document neither permitted nor
+  forbade. Added §6.7, a grid cinema, because the only cinema example was
+  freeform and therefore never exercised the failing case.
+
+  Two alternatives were considered and rejected. Making `RowMeta.index`
+  positional in grid mode is the most symmetric fix available, but it
+  reinterprets an existing field, would silently insert ten empty rows
+  between §6.2's rows at `index` 0 and 11, and would leave `index` meaning
+  different things in different layout modes. A `Section.headroom`/
+  `padding` field is a renderer hint in a format §2 keeps
+  renderer-agnostic, and would solve only the top margin, leaving
+  mid-section space unrepresentable.
+
+  The row-registry and span rules are additive: no previously valid
+  document changes meaning. Binding an `Element` to its section's
+  positioning mode is a new restriction, and follows the rev 9 precedent
+  that established the same constraint for seats.
 - **1.0.0-draft, rev 11** — Added `Section.directions` (§4.10): an
   OPTIONAL, non-normative way to attach a human-facing label to one or
   more of a section's four addressing axes (`row`, `col`, `x`, `y`) —
