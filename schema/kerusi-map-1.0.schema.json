@@ -1,0 +1,717 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-map-1.0.schema.json",
+  "title": "Kerusi Map",
+  "description": "A reusable physical seating configuration: legend, price tiers, sections, seats, and non-bookable elements (Kerusi v1.0, RFC section 4).",
+  "version": "1.0.0-draft",
+  "type": "object",
+  "required": [
+    "kerusi",
+    "id",
+    "legend",
+    "sections"
+  ],
+  "properties": {
+    "kerusi": {
+      "enum": [
+        "1.0"
+      ],
+      "description": "Spec version this document conforms to (section 7)."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique id for this map, e.g. 'cinema3-hallA'. Names the physical configuration, not an event (section 3)."
+    },
+    "name": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string",
+      "description": "Free-text hint, e.g. 'cinema', 'flight', 'theatre', 'stadium', 'bus', 'train', 'custom'.",
+      "$comment": "Non-normative (section 4): a consumer MUST NOT reject a document, and MUST NOT alter required-field validation, on the basis of its domain value. Deliberately NOT constrained to an enum, since an enum would reject conformant documents carrying an unlisted domain hint.",
+      "examples": [
+        "cinema",
+        "flight",
+        "theatre",
+        "stadium",
+        "bus",
+        "train",
+        "custom"
+      ]
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "BCP-47 language tag. Default: 'en'.",
+      "$comment": "Full BCP-47 well-formedness is not enforced here; a validator MAY check it separately."
+    },
+    "legend": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SeatType"
+      },
+      "description": "Vocabulary of seat types used in this map (section 4.7).",
+      "$comment": "No minItems: section 4 declares legend REQUIRED but states no lower bound. A map whose sections hold no seats legitimately needs no seat types."
+    },
+    "priceTiers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PriceTier"
+      },
+      "$comment": "Section 4.9: a KerusiMap MUST NOT mix currencies across seats; exactly one currency value applies to the whole map. Cross-checking every PriceTier.price.currency and Seat.price.currency for equality is beyond JSON Schema and MUST be enforced by a custom validator."
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Section"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), layout inference for sections with no declared layout (section 4.5), companions symmetry (section 4.6), element row-span bounds (section 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema. See schema/README.md.",
+  "$defs": {
+    "LocalizableString": {
+      "description": "A plain string, or a locale map such as { \"en\": \"Orchestra\", \"ms\": \"Orkestra\" }.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "Money": {
+      "type": "object",
+      "title": "Money",
+      "description": "An amount in minor units plus an ISO 4217 currency (section 4.8).",
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "integer",
+          "description": "Minor units (e.g. cents), to avoid floating-point error."
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217 code, e.g. 'MYR', 'USD'."
+        }
+      },
+      "additionalProperties": false
+    },
+    "SeatType": {
+      "type": "object",
+      "title": "SeatType",
+      "description": "A legend entry (section 4.7).",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizableString"
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "Suggested render colour, hex. Non-normative hint."
+        },
+        "defaultPriceTier": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "MUST resolve against KerusiMap.priceTiers[].id (section 4.9 step 3). Cross-collection reference; enforce with a custom validator."
+        }
+      },
+      "additionalProperties": false
+    },
+    "PriceTier": {
+      "type": "object",
+      "title": "PriceTier",
+      "description": "A named price tier referenced by id (section 4.8).",
+      "required": [
+        "id",
+        "price"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "price": {
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Accessibility": {
+      "type": "object",
+      "title": "Accessibility",
+      "description": "Structured accessibility properties (section 4.3.4). All members are OPTIONAL.",
+      "properties": {
+        "wheelchairAccessible": {
+          "type": "boolean"
+        },
+        "transferArmrest": {
+          "enum": [
+            "left",
+            "right",
+            "both",
+            "fixed",
+            "none"
+          ]
+        },
+        "aisleChairCompatible": {
+          "type": "boolean"
+        },
+        "companionRequired": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RowMeta": {
+      "type": "object",
+      "title": "RowMeta",
+      "description": "A descriptive row registry entry (section 4.2). Not a container: seats live in Section.seats.",
+      "$comment": "A RowMeta that no seat references is an empty row and is valid (section 4.2.2); it reserves one row of vertical space in the section's row order. A validator MUST NOT reject it, in any layout mode.",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "description": "Ordering key among rows in the section, not a position (section 4.2.1)."
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Direction": {
+      "type": "object",
+      "title": "Direction",
+      "description": "An optional, purely informational label pair for one addressing axis (section 4.10).",
+      "$comment": "Non-normative: MUST NOT be used by a validator to reject a document, and MUST NOT be relied upon by a renderer to decide layout or screen placement (section 4.10).",
+      "required": [
+        "axis",
+        "low",
+        "high"
+      ],
+      "properties": {
+        "axis": {
+          "enum": [
+            "row",
+            "col",
+            "x",
+            "y"
+          ]
+        },
+        "low": {
+          "$ref": "#/$defs/LocalizableString"
+        },
+        "high": {
+          "$ref": "#/$defs/LocalizableString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Seat": {
+      "type": "object",
+      "title": "Seat",
+      "description": "A bookable seat (section 4.3). Its position is a property of the seat, not a slot in a shared array.",
+      "$comment": "Referential integrity (section 4.6), not expressible in JSON Schema: Seat.type MUST resolve against KerusiMap.legend[].id; Seat.priceTier MUST resolve against KerusiMap.priceTiers[].id; Seat.row MUST resolve against Section.rows[].id when Section.rows is present (opaque free text otherwise); Seat.companions[] MUST resolve against other Seat.id values within the same section AND MUST be fully symmetric. A conformant validator MUST reject a document where any of these fails.",
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Globally unique within the KerusiMap.",
+          "$comment": "Uniqueness across all sections is not expressible in JSON Schema; enforce with a custom validator."
+        },
+        "label": {
+          "type": "string"
+        },
+        "row": {
+          "type": "string",
+          "minLength": 1
+        },
+        "col": {
+          "type": "integer",
+          "description": "Grid column within the row."
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percent of section width (see Section.aspectRatio)."
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percent of section height."
+        },
+        "rotation": {
+          "type": "number",
+          "description": "Degrees."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "References a SeatType.id in the map's legend. Mutually exclusive: a seat has exactly one type (section 4.3.3)."
+        },
+        "priceTier": {
+          "type": "string",
+          "minLength": 1
+        },
+        "price": {
+          "$ref": "#/$defs/Money",
+          "description": "Literal override; takes precedence over priceTier (section 4.9)."
+        },
+        "companions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Zero or more non-exclusive tags. MUST NOT independently affect price (section 4.3.3)."
+        },
+        "accessibility": {
+          "$ref": "#/$defs/Accessibility"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "title": "Positioning requirement (section 4.3.1)",
+          "description": "A Seat MUST specify col, or x and y, or both. A Seat MUST NOT specify neither.",
+          "$comment": "anyOf, not oneOf: 'or both' is explicitly permitted by section 4.3.1, and a oneOf over these overlapping branches would reject a seat carrying col, x and y - the shape section 4.5 REQUIRES of every seat in a 'mixed' section. The stricter per-mode rules are applied by the enclosing Section.",
+          "anyOf": [
+            {
+              "required": [
+                "col"
+              ]
+            },
+            {
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Element": {
+      "type": "object",
+      "title": "Element",
+      "description": "A non-bookable feature that still requires rendering: screen, stage, exit, lavatory, staircase, or a labelled gap (section 4.4).",
+      "$comment": "Element.row MUST resolve against Section.rows[].id when Section.rows is present (section 4.6). In a 'grid' section, an element's row span (height) MUST NOT extend past the last row in the section's row order (sections 4.2.1 and 4.6) - a bound a custom validator MUST check.",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "'screen' | 'stage' | 'exit' | 'lavatory' | 'gap' | 'aisle' | implementation-defined."
+        },
+        "label": {
+          "type": "string"
+        },
+        "row": {
+          "type": "string",
+          "minLength": 1
+        },
+        "col": {
+          "type": "integer"
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "width": {
+          "type": "number",
+          "description": "Grid: a column span in cells (positive integer, default 1). Freeform: a percentage of section width (section 4.4.1)."
+        },
+        "height": {
+          "type": "number",
+          "description": "Grid: a row span in cells (positive integer, default 1). Freeform: a percentage of section height (section 4.4.1)."
+        },
+        "rotation": {
+          "type": "number"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "title": "Element positioning requirement (section 4.4.1)",
+          "description": "An Element MUST be positioned: by row and/or col, or by x and y.",
+          "$comment": "row alone is sufficient in a grid section - section 4.4.1 permits positioning 'by row and/or col', and a full-width screen omits col so that it spans the section's full column extent (see section 6.7). The stricter per-mode rules are applied by the enclosing Section.",
+          "anyOf": [
+            {
+              "required": [
+                "row"
+              ]
+            },
+            {
+              "required": [
+                "col"
+              ]
+            },
+            {
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "Section": {
+      "type": "object",
+      "title": "Section",
+      "description": "A flat list of seats plus an optional row registry and elements (section 4.1).",
+      "$comment": "If layout is omitted, a validator MUST infer it from the section's seats (section 4.5): (1) every seat has col and no seat has x or y -> 'grid'; (2) every seat has both x and y and no seat has col -> 'freeform'; (3) any other combination is inconsistent and the document MUST be rejected. Inference never produces 'mixed', which MUST be declared explicitly. The allOf below enforces the three declared modes for seats and elements; the inference case and its rejection rule require a custom validator.",
+      "required": [
+        "id",
+        "seats"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizableString"
+        },
+        "index": {
+          "type": "integer",
+          "description": "Display order among sections."
+        },
+        "layout": {
+          "enum": [
+            "grid",
+            "freeform",
+            "mixed"
+          ],
+          "description": "A strict, validated positioning constraint, not a rendering hint (section 4.5)."
+        },
+        "aspectRatio": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*:[1-9][0-9]*$",
+          "description": "'width:height', e.g. '16:9'. Meaningful only for freeform/mixed sections. Default: '1:1'.",
+          "$comment": "Both dimensions must be non-zero: section 4.5 gives aspectRatio the job of fixing the canvas proportions that percentage coordinates, rotation and element sizing are measured against, and a zero width or height leaves all three undefined."
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RowMeta"
+          },
+          "$comment": "When present, this is the section's complete, ordered row registry: every Seat.row and Element.row MUST resolve against it (sections 4.2 and 4.6)."
+        },
+        "directions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Direction"
+          }
+        },
+        "seats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Seat"
+          },
+          "description": "Flat list; order is not significant (section 4.1).",
+          "$comment": "No minItems: section 4.1 declares seats REQUIRED but states no lower bound, so a section that holds only elements - a stage or a screen with no seats of its own - is valid."
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Element"
+          }
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "title": "Grid mode (sections 4.5 and 4.4.1)",
+          "description": "Every seat MUST have col and MUST NOT have x or y. Every element MUST be positioned by row and/or col, MUST NOT have x or y, and its width/height spans MUST be positive integers.",
+          "if": {
+            "required": [
+              "layout"
+            ],
+            "properties": {
+              "layout": {
+                "const": "grid"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "seats": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "col"
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "x"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "y"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "elements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "anyOf": [
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "col"
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "x"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "y"
+                        ]
+                      }
+                    ]
+                  },
+                  "properties": {
+                    "width": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "height": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "title": "Freeform mode (sections 4.5 and 4.4.1)",
+          "description": "Every seat MUST have both x and y and MUST NOT have col. Every element MUST have x and y and MUST NOT have col; it MAY still carry row as a label.",
+          "if": {
+            "required": [
+              "layout"
+            ],
+            "properties": {
+              "layout": {
+                "const": "freeform"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "seats": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "not": {
+                    "required": [
+                      "col"
+                    ]
+                  }
+                }
+              },
+              "elements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "not": {
+                    "required": [
+                      "col"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "title": "Mixed mode (sections 4.5 and 4.4.1)",
+          "description": "Every seat MUST have col AND both x and y. An element MAY use either addressing, or both; a grid-addressed element's width/height spans MUST still be positive integers.",
+          "if": {
+            "required": [
+              "layout"
+            ],
+            "properties": {
+              "layout": {
+                "const": "mixed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "seats": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "col",
+                    "x",
+                    "y"
+                  ]
+                }
+              },
+              "elements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "$comment": "'MAY use either' (section 4.4.1) means either of the two addressing schemes, so grid addressing here keeps its 'row and/or col' form - a row-only element, such as the full-width screen of section 6.7, is as valid in a mixed section as in a grid one.",
+                  "anyOf": [
+                    {
+                      "required": [
+                        "row"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "col"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "x",
+                        "y"
+                      ]
+                    }
+                  ],
+                  "allOf": [
+                    {
+                      "title": "Grid-addressed element spans (section 4.4.1)",
+                      "$comment": "width/height are interpreted 'according to that same mode' (section 4.4.1). An element carrying neither x nor y is grid-addressed, so its spans are cell counts and MUST be positive integers - the same rule the grid branch applies. Once x/y is present it governs visual placement (section 4.3.1) and the spans are percentages, so no integrality applies.",
+                      "if": {
+                        "not": {
+                          "anyOf": [
+                            {
+                              "required": [
+                                "x"
+                              ]
+                            },
+                            {
+                              "required": [
+                                "y"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "then": {
+                        "type": "object",
+                        "properties": {
+                          "width": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "height": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
