@@ -19,6 +19,10 @@
         {
           "id": "stage-1",
           "index": 0
+        },
+        {
+          "id": "stage-2",
+          "index": 1
         }
       ],
       "elements": [

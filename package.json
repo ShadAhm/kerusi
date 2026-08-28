@@ -2,9 +2,15 @@
   "name": "kerusi-schema",
   "version": "1.0.0-draft",
   "private": true,
-  "description": "JSON Schemas for the Kerusi seat map and availability format, plus example documents and a conformance test for them.",
+  "description": "JSON Schemas and a conformance validator for the Kerusi seat map and availability format, plus TypeScript types, example documents and a test harness for them.",
   "license": "MIT",
   "type": "module",
+  "types": "schema/kerusi-1.0.d.ts",
+  "exports": {
+    "./validator": "./schema/validator.mjs",
+    "./semantic-rules": "./schema/semantic-rules.mjs",
+    "./schemas/*": "./schema/*.schema.json"
+  },
   "scripts": {
     "test": "node schema/test/validate-examples.mjs"
   },
