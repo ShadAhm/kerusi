@@ -13,6 +13,18 @@ schemas.
 | [`kerusi-state-1.0.schema.json`](kerusi-state-1.0.schema.json) | `KerusiState` | §5.1 | A complete availability snapshot. Sparse: a seat absent from `seats` is `available`. |
 | [`kerusi-statedelta-1.0.schema.json`](kerusi-statedelta-1.0.schema.json) | `KerusiStateDelta` | §5.2 | An incremental update for a push transport. Every entry in `changes` is an explicit change; absence means *unchanged*. |
 
+The schemas are one half of a conformant validator. The other half — the
+whole-document and cross-collection rules of §4–§5 that JSON Schema cannot
+express — is [`validator.mjs`](validator.mjs), which runs the schema check
+first and the semantic rules after it. See
+[What the validator enforces](#what-the-validator-enforces).
+
+| File | Purpose |
+|---|---|
+| [`validator.mjs`](validator.mjs) | The validator: schemas (via ajv) then semantic rules. Its only dependency is ajv. |
+| [`semantic-rules.mjs`](semantic-rules.mjs) | The semantic rules alone. Dependency-free, per §8's `@kerusi/schema`. |
+| [`kerusi-1.0.d.ts`](kerusi-1.0.d.ts) | TypeScript interfaces transcribed from §4–§5. Declarations only; they enforce nothing at runtime. |
+
 Each schema carries a `version` member (`"1.0.0-draft"`) naming the spec
 revision it tracks. That is Kerusi metadata, not a JSON Schema keyword — see
 [Running under ajv](#running-under-ajv).
@@ -45,6 +57,40 @@ ajv.addKeyword({ keyword: 'version', metaSchema: { type: 'string' } });
 const validateMap = ajv.compile(mapSchema);
 if (!validateMap(doc)) console.error(validateMap.errors);
 ```
+
+Or through the validator, which does the ajv setup below for you and then
+applies the semantic rules the schema cannot reach:
+
+```js
+import { createValidator } from './schema/validator.mjs';
+
+const kerusi = createValidator();
+const { valid, errors } = kerusi.validate(doc, 'map');
+for (const e of errors) console.error(`${e.path || '/'} [${e.rule}, §${e.spec}] ${e.message}`);
+```
+
+Every error carries a `rule` code, the spec section it comes from, a
+JSON Pointer (RFC 6901) to the offending node, and a message. Both stages run
+on every document and neither stops at the first failure, so one call reports
+everything it can see:
+
+```
+/sections/0/seats/3/type [seat-type-unresolved, §4.6] seat "A4" has type "recliner", which the map's legend does not declare
+/priceTiers/1/price/currency [map-currency-mixed, §4.9] currency "USD" differs from "MYR", first used at /priceTiers/0/price/currency; exactly one currency applies to the whole map
+```
+
+`updatedAt` monotonicity (§5.2) is a property of a stream rather than of one
+document, so it has its own entry point, which validates each delta and then
+the sequence:
+
+```js
+const { valid, errors } = kerusi.validateDeltaStream(deltasInReceiptOrder);
+```
+
+[`semantic-rules.mjs`](semantic-rules.mjs) exports the same rules with no
+dependency on ajv — `checkMap`, `checkDeltaStream`, and the `rowOrder`,
+`inferLayout` and `effectiveLayout` helpers a renderer needs anyway — for a
+consumer that validates against the schemas by other means.
 
 ### Running under ajv
 
@@ -121,32 +167,46 @@ is also recorded in a `$comment` at the point where it applies.
   values are kept as `examples`. `Section.directions` (§4.10) is left
   unconstrained beyond its shape for the same reason.
 
-## What they cannot enforce
+## What the validator enforces
 
 JSON Schema cannot express cross-collection references or whole-document
 invariants. Each of the rules below is normative and a conformant validator
-MUST enforce it (§4.6, §7), but a document can violate any of them and still
-pass these schemas. Every rule is also recorded in a `$comment` at the point in
-the schema where it applies.
+MUST enforce it (§4.6, §7), and a document can violate any of them and still
+pass the schemas — so [`semantic-rules.mjs`](semantic-rules.mjs) enforces them
+in code, and [`validator.mjs`](validator.mjs) runs both stages together. Every
+rule is also recorded in a `$comment` at the point in the schema where it
+applies.
 
-| Rule | Spec | Why it needs code |
-|---|---|---|
-| `Seat.type` resolves against `legend[].id` | §4.6 | Reference into a sibling collection |
-| `Seat.priceTier` and `SeatType.defaultPriceTier` resolve against `priceTiers[].id` | §4.6, §4.9 | Same |
-| `Seat.row` / `Element.row` resolve against `Section.rows[].id`, when `rows` is present | §4.6 | Same. If a section declares no `rows`, `row` is opaque free text and always valid |
-| `Seat.companions[]` resolve to other seats **in the same section**, and are fully symmetric | §4.6 | Needs a graph check across the section |
-| `Seat.id` uniqueness across the whole map | §4.3 | Needs a document-wide set |
-| **Layout inference** for a section with no declared `layout` | §4.5 | Infer `grid` / `freeform` from the seats; reject any other mix. Inference never yields `mixed` |
-| Element row span within the section's row order | §4.4.1, §4.6 | Needs the materialized row order of §4.2.1 |
-| One currency across the whole map | §4.9 | Needs every `Money` in the document |
-| `updatedAt` strictly increasing across a delta stream | §5.2 | A property of a stream, not of one document |
-| State/delta seat keys matching `Seat.id` in the referenced map | §3 | Cross-document |
+| Rule | Spec | Enforced as | Fixture |
+|---|---|---|---|
+| `Seat.type` resolves against `legend[].id` | §4.6 | `seat-type-unresolved` | [`dangling-seat-type`](../examples/validator-only/dangling-seat-type.map.kerusi.json) |
+| `Seat.priceTier` and `SeatType.defaultPriceTier` resolve against `priceTiers[].id` | §4.6, §4.9 | `seat-price-tier-unresolved`, `seat-type-default-price-tier-unresolved` | [`dangling-price-tier`](../examples/validator-only/dangling-price-tier.map.kerusi.json) |
+| `Seat.row` / `Element.row` resolve against `Section.rows[].id`, when `rows` is present | §4.6 | `seat-row-unresolved`, `element-row-unresolved` | [`dangling-row`](../examples/validator-only/dangling-row.map.kerusi.json) |
+| `Seat.companions[]` resolve to other seats **in the same section**, and are fully symmetric | §4.6 | `companion-unresolved`, `companion-self-reference`, `companion-asymmetric`, `companion-group-incomplete` | [`asymmetric-companions`](../examples/validator-only/asymmetric-companions.map.kerusi.json) |
+| **Layout inference** for a section with no declared `layout`, and the per-mode rules that follow it | §4.5, §4.4.1 | `layout-inference-inconsistent`, `seat-layout-mismatch`, `element-layout-mismatch`, `element-span-invalid` | [`inferred-layout-inconsistent`](../examples/validator-only/inferred-layout-inconsistent.map.kerusi.json) |
+| Element row span within the section's row order | §4.4.1, §4.6 | `element-row-span-overrun` | [`element-rowspan-overruns`](../examples/validator-only/element-rowspan-overruns.map.kerusi.json) |
+| One currency across the whole map | §4.9 | `map-currency-mixed` | [`mixed-currencies`](../examples/validator-only/mixed-currencies.map.kerusi.json) |
+| `Seat.id` uniqueness across the whole map | §4.3 | `seat-id-duplicate` | [`duplicate-seat-ids`](../examples/validator-only/duplicate-seat-ids.map.kerusi.json) |
+| `updatedAt` strictly increasing across a delta stream | §5.2 | `delta-updated-at-not-increasing`, via `validateDeltaStream` | stream cases in [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
 
-The **layout inference** gap is the one most likely to surprise: a section that
-declares `layout` is fully checked here, but a section that omits it is not
-checked at all by these schemas — not its seats, and not its elements' cell
-spans — even though §4.5 makes the same consistency rule binding. Producers are
-encouraged to declare `layout` explicitly.
+Two notes on scope:
+
+- **Layout inference** is where the schemas and the validator differ most. A
+  section that declares `layout` is fully checked by the schema; a section that
+  omits it is not checked by the schema at all — not its seats, and not its
+  elements' cell spans — even though §4.5 makes the same consistency rule
+  binding. The validator applies the per-mode rules of §4.5 and §4.4.1 to every
+  section, using the declared mode where there is one and the inferred mode
+  otherwise, so an inferred `grid` section's elements are held to the same
+  standard as a declared one's. Producers are still encouraged to declare
+  `layout` explicitly. One case is left unchecked deliberately: a section with
+  no seats *and* no declared `layout` has nothing to infer from and the spec
+  defines no fallback, so its elements go unchecked rather than be judged
+  against a guessed mode.
+- **Cross-document** checking remains out of scope. Whether a `KerusiState`'s
+  seat keys match `Seat.id` in the referenced map (§3) needs both documents and
+  a way to resolve `sessionId` to a `mapId`; the validator takes one document
+  (or one stream) at a time.
 
 ## Examples and tests
 
@@ -171,12 +231,21 @@ registered extension.
   conformant validator MUST reject: dangling `type`/`priceTier`/`row`
   references, asymmetric `companions`, a section whose omitted `layout` cannot
   be consistently inferred, an element row span that overruns the section,
-  mixed currencies, and duplicate `Seat.id`s. They pin down the boundary in the
-  table above, and are the natural fixture set for a full validator when one is
-  written.
+  mixed currencies, and duplicate `Seat.id`s. One per rule family in the table
+  above, and the fixture set the validator is tested against.
 
-Run the whole corpus against the schemas:
+Run the corpus through both stages of the validator:
 
 ```bash
 npm install && npm test
 ```
+
+[`test/validate-examples.mjs`](test/validate-examples.mjs) is the single entry
+point. It asserts that `examples/` passes both stages, that every document in
+`examples/invalid/` is caught by the *schema* stage (a document only the
+semantic rules reject belongs in `validator-only/` instead), and that each
+`validator-only/` document passes the schema and then produces exactly the rule
+code and JSON Pointer expected of it — not merely that it failed somehow. It
+finishes with [`test/semantic-cases.mjs`](test/semantic-cases.mjs), which covers
+what a corpus of single files cannot: the accepting side of each rule, the row
+ordering of §4.2.1, and delta-stream monotonicity.

@@ -72,7 +72,7 @@
     }
   },
   "additionalProperties": false,
-  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), layout inference for sections with no declared layout (section 4.5), companions symmetry (section 4.6), element row-span bounds (section 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema. See schema/README.md.",
+  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), layout inference for sections with no declared layout (section 4.5), companions symmetry (section 4.6), element row-span bounds (section 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema: schema/validator.mjs runs this schema and then those rules. See schema/README.md.",
   "$defs": {
     "LocalizableString": {
       "description": "A plain string, or a locale map such as { \"en\": \"Orchestra\", \"ms\": \"Orkestra\" }.",

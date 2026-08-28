@@ -2,18 +2,20 @@
 
 Kerusi (Malay for "chair") is a vendor-neutral, domain-agnostic data format for describing the physical layout of seats and their real-time availability. It's a data format, not a library, protocol, or renderer — any backend (cinema, airline, theatre, stadium, bus, or train booking system) can produce a conformant document, and any renderer (canvas, SVG, DOM grid) can consume one.
 
-This repository holds the specification itself, plus the JSON Schemas that make it mechanically checkable: [`schema/`](schema/) has one schema per document type (§8), and [`examples/`](examples/) holds the conformance corpus they are tested against. There is no runtime library here.
+This repository holds the specification itself, plus the tooling that makes it mechanically checkable: [`schema/`](schema/) has one JSON Schema per document type (§8) and a validator for the §4–§5 rules JSON Schema cannot express, and [`examples/`](examples/) holds the conformance corpus both are tested against. There is no renderer here.
 
 ## Status
 
 **Draft — open for comment.** The current draft is version `1.0.0-draft`, not yet finalized. See [§10 Open Issues](RFC/kerusi-standard_v1.0.0-draft.md#10-open-issues-for-the-10-release) for what's still unresolved before a stable 1.0 release.
 
-## The schemas
+## The schemas and the validator
 
 🧪 [schema/](schema/) — draft 2020-12 JSON Schemas for `KerusiMap`, `KerusiSession`,
-`KerusiState`, and `KerusiStateDelta`, with a [README](schema/README.md) covering what they
-enforce, where they deliberately deviate from the spec text, and which normative rules of
-§4.6 need a custom validator instead.
+`KerusiState`, and `KerusiStateDelta`, the [validator](schema/validator.mjs) that runs them
+and then enforces the referential-integrity, layout-inference and whole-document rules of
+§4–§5 that JSON Schema cannot state, and [TypeScript interfaces](schema/kerusi-1.0.d.ts)
+for every type in §4–§5. The [README](schema/README.md) covers what each stage enforces
+and where the schemas deliberately deviate from the spec text.
 
 ```bash
 npm install && npm test
