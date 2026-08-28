@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-statedelta-1.0.schema.json",
+  "title": "Kerusi State Delta",
+  "description": "Incremental seat status updates for a push transport such as WebSocket or SSE (Kerusi v1.0, RFC section 5.2).",
+  "version": "1.0.0-draft",
+  "type": "object",
+  "required": [
+    "kerusi",
+    "updatedAt",
+    "changes"
+  ],
+  "properties": {
+    "kerusi": {
+      "enum": [
+        "1.0"
+      ],
+      "description": "Spec version this document conforms to (section 7)."
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Matches KerusiSession.id. Same either/or rule as KerusiState."
+    },
+    "mapId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Matches KerusiMap.id directly."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601, strictly increasing per session/map, so a consumer can detect and discard an out-of-order delta.",
+      "$comment": "Monotonicity is a property of a stream of deltas, not of a single document, and cannot be checked by this schema. A consumer that detects a gap or an out-of-order delta SHOULD discard its accumulated state and re-fetch a full KerusiState (section 5.2). Deliberate narrowing: 'format: date-time' is the RFC 3339 profile of ISO 8601, not all of ISO 8601. It rejects forms the spec's phrase 'ISO 8601' admits - '2026-08-17T09:14Z' (seconds omitted) and the basic format '20260817T091400Z' - and, per RFC 3339 section 5.6, some validators also accept a space in place of 'T'. RFC 3339 is what interoperating producers mean in practice, so this schema requires it; the spec text should say so explicitly before 1.0 is declared stable."
+    },
+    "changes": {
+      "type": "object",
+      "description": "Keyed by Seat.id. Every entry IS an explicit change; there is no default. An explicit { \"status\": \"available\" } entry signals a seat reverting, and a seat's absence means 'unchanged' - the opposite of KerusiState's sparse rule (section 5.2).",
+      "propertyNames": {
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/SeatStatus"
+      },
+      "$comment": "An empty changes object is valid: section 5.2 RECOMMENDS heartbeat deltas with a no-op changes object and an advancing updatedAt to keep sequencing gaps rare. Every key MUST match a Seat.id in the referenced KerusiMap; that is a cross-document check for a custom validator."
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "title": "Session-or-map scope (section 5.2)",
+      "description": "Exactly one of sessionId or mapId MUST be present.",
+      "oneOf": [
+        {
+          "required": [
+            "sessionId"
+          ],
+          "not": {
+            "required": [
+              "mapId"
+            ]
+          }
+        },
+        {
+          "required": [
+            "mapId"
+          ],
+          "not": {
+            "required": [
+              "sessionId"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "SeatStatus": {
+      "type": "object",
+      "title": "SeatStatus",
+      "description": "The status of one seat (section 5.1). Identical in shape to KerusiState's SeatStatus.",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "available",
+            "held",
+            "booked",
+            "blocked"
+          ]
+        },
+        "holdExpires": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601. Meaningful only when status is 'held'.",
+          "$comment": "Deliberate narrowing: 'format: date-time' is the RFC 3339 profile of ISO 8601, not all of ISO 8601. It rejects forms the spec's phrase 'ISO 8601' admits - '2026-08-17T09:14Z' (seconds omitted) and the basic format '20260817T091400Z' - and, per RFC 3339 section 5.6, some validators also accept a space in place of 'T'. RFC 3339 is what interoperating producers mean in practice, so this schema requires it; the spec text should say so explicitly before 1.0 is declared stable."
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

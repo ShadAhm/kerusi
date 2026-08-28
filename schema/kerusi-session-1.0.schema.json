@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-session-1.0.schema.json",
+  "title": "Kerusi Session",
+  "description": "A single event, showing, or departure bound to a reusable KerusiMap (Kerusi v1.0, RFC section 5.3).",
+  "version": "1.0.0-draft",
+  "type": "object",
+  "required": [
+    "kerusi",
+    "id",
+    "mapId"
+  ],
+  "properties": {
+    "kerusi": {
+      "enum": [
+        "1.0"
+      ],
+      "description": "Spec version this document conforms to (section 7)."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique session id, e.g. 'MH123-2026-08-17' or 'hallA-2026-08-17T19:30'.",
+      "$comment": "Referenced by KerusiState.sessionId and KerusiStateDelta.sessionId (section 5.1, 5.2)."
+    },
+    "mapId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "References the reusable KerusiMap.id.",
+      "$comment": "MUST resolve against a KerusiMap.id. Cross-document reference; enforce with a custom validator that has both documents in hand."
+    },
+    "label": {
+      "type": "string",
+      "description": "e.g. 'Dune: Part Three - 7:30pm', 'MH123, 17 Aug 2026'."
+    },
+    "startsAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 - showtime / departure / event start.",
+      "$comment": "ajv only enforces 'format' when ajv-formats is registered and strict formats are enabled; see schema/README.md. Deliberate narrowing: 'format: date-time' is the RFC 3339 profile of ISO 8601, not all of ISO 8601. It rejects forms the spec's phrase 'ISO 8601' admits - '2026-08-17T09:14Z' (seconds omitted) and the basic format '20260817T091400Z' - and, per RFC 3339 section 5.6, some validators also accept a space in place of 'T'. RFC 3339 is what interoperating producers mean in practice, so this schema requires it; the spec text should say so explicitly before 1.0 is declared stable."
+    },
+    "endsAt": {
+      "type": "string",
+      "format": "date-time",
+      "$comment": "Section 5.3 states no ordering rule between startsAt and endsAt; a producer SHOULD nonetheless not emit an endsAt earlier than startsAt. Not enforced here. Deliberate narrowing: 'format: date-time' is the RFC 3339 profile of ISO 8601, not all of ISO 8601. It rejects forms the spec's phrase 'ISO 8601' admits - '2026-08-17T09:14Z' (seconds omitted) and the basic format '20260817T091400Z' - and, per RFC 3339 section 5.6, some validators also accept a space in place of 'T'. RFC 3339 is what interoperating producers mean in practice, so this schema requires it; the spec text should say so explicitly before 1.0 is declared stable."
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "KerusiSession is entirely OPTIONAL (section 5.3): an application with a genuine one-map-one-event relationship MAY omit it and have KerusiState reference mapId directly. A multi-leg or multi-day booking is represented as multiple ordinary sessions, one per leg or date (section 5.4)."
+}
