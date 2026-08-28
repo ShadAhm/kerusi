@@ -3,7 +3,7 @@
   "version": "1.0.0-draft",
   "private": true,
   "description": "JSON Schemas for the Kerusi seat map and availability format, plus example documents and a conformance test for them.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "node schema/test/validate-examples.mjs"

@@ -60,9 +60,8 @@ Three settings matter:
   set.
 - **`format`.** `date-time` on `updatedAt`, `holdExpires`, `startsAt`, and
   `endsAt` is only enforced when `ajv-formats` is registered. Without it those
-  members are validated as plain strings. See
-  [Deliberate deviations](#deliberate-deviations) for what `date-time` means
-  here.
+  members are validated as plain strings — which silently drops the §5.1.1
+  requirement, so register it.
 
 ## What these schemas enforce
 
@@ -93,6 +92,9 @@ Three settings matter:
   dimension leaves all three undefined.
 - Enumerated values: `SeatStatus.status`, `Accessibility.transferArmrest`,
   `Section.layout`, `Direction.axis`.
+- Timestamps as RFC 3339 `date-time` (§5.1.1) on `updatedAt`, `holdExpires`,
+  `startsAt`, and `endsAt` — seconds present, explicit offset or `Z`. Note that
+  per RFC 3339 §5.6 some validators still accept a space in place of `T`.
 - Exactly one of `sessionId`/`mapId` on `KerusiState` and `KerusiStateDelta`
   (§5.1–§5.2).
 
@@ -103,16 +105,9 @@ section that holds only elements — a stage or a screen with no seats of its ow
 
 ## Deliberate deviations
 
-Three places where a schema cannot be a neutral transcription of the spec. Each
+Two places where a schema cannot be a neutral transcription of the spec. Each
 is also recorded in a `$comment` at the point where it applies.
 
-- **`date-time` is RFC 3339, not all of ISO 8601.** §5.1–§5.3 say "ISO 8601";
-  `format: "date-time"` enforces the narrower RFC 3339 profile, so it rejects
-  `2026-08-17T09:14Z` (seconds omitted) and the basic format
-  `20260817T091400Z`, while some validators accept a space in place of `T` per
-  RFC 3339 §5.6. RFC 3339 is what interoperating producers mean in practice, so
-  the schemas require it — **the spec text should say so explicitly before 1.0
-  is declared stable.**
 - **`additionalProperties: false` is a producer-side gate.** §8 says
   implementation-specific data belongs under `metadata`, never as a bare
   top-level member, but §2 and §7 say a *consumer* MUST NOT reject a document
@@ -170,8 +165,8 @@ registered extension.
   members, a wrong `kerusi` version, a bare top-level vendor field,
   layout-inconsistent seats and elements, a fractional cell span in both a
   `grid` and a `mixed` section, a degenerate `aspectRatio`, a lowercase
-  currency, a fractional `Money.amount`, and state/delta documents with both or
-  neither of `sessionId`/`mapId`.
+  currency, a fractional `Money.amount`, an ISO 8601 timestamp that is not RFC 3339, and
+  state/delta documents with both or neither of `sessionId`/`mapId`.
 - `examples/validator-only/` — documents that **pass** these schemas but that a
   conformant validator MUST reject: dangling `type`/`priceTier`/`row`
   references, asymmetric `companions`, a section whose omitted `layout` cannot

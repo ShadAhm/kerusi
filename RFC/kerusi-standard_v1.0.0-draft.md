@@ -660,14 +660,15 @@ interface KerusiState {
   mapId?: string;                   // Matches KerusiMap.id directly, for documents with
                                       //   no separate session concept.
                                       //   Exactly one of sessionId/mapId MUST be present.
-  updatedAt: string;                // REQUIRED. ISO 8601 timestamp.
+  updatedAt: string;                // REQUIRED. RFC 3339 timestamp (§5.1.1).
   seats: Record<string, SeatStatus>;  // REQUIRED. Keyed by Seat.id. Only non-default
                                         //   entries need be included (see below).
 }
 
 interface SeatStatus {
   status: "available" | "held" | "booked" | "blocked";  // REQUIRED.
-  holdExpires?: string;             // ISO 8601. Meaningful only when status === "held".
+  holdExpires?: string;             // RFC 3339 (§5.1.1). Meaningful only when
+                                      //   status === "held".
   metadata?: Record<string, unknown>;
 }
 ```
@@ -691,6 +692,25 @@ booking-engine designs. Kerusi's role is limited to carrying the
 resulting `holdExpires` timestamp, which is sufficient for any renderer
 to show a consistent countdown regardless of what policy produced it.
 
+#### 5.1.1 Timestamp format
+
+Every timestamp in this specification — `KerusiState.updatedAt`,
+`SeatStatus.holdExpires`, `KerusiStateDelta.updatedAt`,
+`KerusiSession.startsAt`, and `KerusiSession.endsAt` — MUST be an **RFC 3339
+`date-time`**: the calendar-date profile of ISO 8601, with seconds present and
+an explicit UTC offset or `Z`, for example `2026-08-17T09:14:00Z` or
+`2026-08-17T21:15:00+08:00`.
+
+ISO 8601 as a whole is broader than this, and admits forms that are ambiguous
+or awkward to parse interoperably — seconds omitted (`2026-08-17T09:14Z`),
+the basic format without separators (`20260817T091400Z`), ordinal and week
+dates, and local times carrying no offset at all. A consumer receiving a
+timestamp it cannot parse cannot show a correct hold countdown or order a
+delta stream, so this specification narrows the requirement to the profile
+every mainstream date library and JSON Schema validator already implements as
+`format: "date-time"`. A producer emitting any other ISO 8601 form is
+non-conformant, and a validator MUST reject the document.
+
 ### 5.2 KerusiStateDelta — incremental updates
 
 `KerusiState`'s sparse convention (absence implies `"available"`) is
@@ -705,7 +725,7 @@ interface KerusiStateDelta {
   kerusi: "1.0";                    // REQUIRED.
   sessionId?: string;                // Same either/or rule as KerusiState.
   mapId?: string;
-  updatedAt: string;                 // REQUIRED. ISO 8601, strictly increasing per
+  updatedAt: string;                 // REQUIRED. RFC 3339 (§5.1.1), strictly increasing per
                                        //   session/map, so a consumer can detect and
                                        //   discard an out-of-order delta.
   changes: Record<string, SeatStatus>;  // REQUIRED. Keyed by Seat.id. Every entry IS a
@@ -750,7 +770,8 @@ interface KerusiSession {
   mapId: string;                     // REQUIRED. References the reusable KerusiMap.id.
   label?: string;                     // e.g. "Dune: Part Three — 7:30pm",
                                         //   "MH123, 17 Aug 2026".
-  startsAt?: string;                   // ISO 8601 — showtime / departure / event start.
+  startsAt?: string;                   // RFC 3339 (§5.1.1) — showtime / departure /
+                                        //   event start.
   endsAt?: string;
   metadata?: Record<string, unknown>;
 }
@@ -1204,6 +1225,22 @@ semantics (resolved as intentionally delegated to the booking engine,
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 13** — Narrowed the timestamp requirement from "ISO
+  8601" to an **RFC 3339 `date-time`**, stated once in a new §5.1.1 and
+  referenced from every timestamp field (`KerusiState.updatedAt`,
+  `SeatStatus.holdExpires`, `KerusiStateDelta.updatedAt`,
+  `KerusiSession.startsAt`, `KerusiSession.endsAt`). "ISO 8601" admits forms
+  — seconds omitted, basic format, ordinal and week dates, local times with
+  no offset — that a consumer cannot reliably parse, and a consumer that
+  cannot parse `holdExpires` cannot show a correct countdown, nor order a
+  delta stream by `updatedAt` (§5.2). The narrowing also closes a gap between
+  this document and the JSON Schemas published under §8, whose
+  `format: "date-time"` has always meant RFC 3339: previously a producer could
+  satisfy the prose and fail the schema.
+
+  This is a restriction on producers, not an additive change. A document whose
+  timestamps were already `2026-08-17T09:14:00Z` — the form every example in
+  §6 uses — is unaffected.
 - **1.0.0-draft, rev 12** — Made the grid axis vocabulary symmetric, so a
   grid-addressed section can express vertical space. A `RowMeta` that no
   seat references is now an **empty row** occupying a slot in the
