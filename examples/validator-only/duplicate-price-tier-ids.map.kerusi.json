@@ -1,0 +1,38 @@
+{
+  "kerusi": "1.0",
+  "id": "duplicate-price-tier-ids",
+  "legend": [
+    {
+      "id": "standard"
+    }
+  ],
+  "priceTiers": [
+    {
+      "id": "regular",
+      "price": {
+        "amount": 1500,
+        "currency": "MYR"
+      }
+    },
+    {
+      "id": "regular",
+      "price": {
+        "amount": 2000,
+        "currency": "MYR"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "s",
+      "seats": [
+        {
+          "id": "A1",
+          "col": 1,
+          "type": "standard",
+          "priceTier": "regular"
+        }
+      ]
+    }
+  ]
+}

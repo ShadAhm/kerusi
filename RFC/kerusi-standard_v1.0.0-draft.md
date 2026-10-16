@@ -196,10 +196,11 @@ in a shared array.
 
 ```ts
 interface Section {
-  id: string;                    // REQUIRED.
+  id: string;                    // REQUIRED. Unique within the KerusiMap (§4.6).
   label?: string | Record<string, string>;  // String, or locale map:
                                     //   { "en": "Orchestra", "ms": "Orkestra" }.
-  index?: number;                 // Display order among sections.
+  index?: number;                 // Ordering key among sections (§4.1.1).
+                                    //   An ordering key, not a position.
   layout?: "grid" | "freeform" | "mixed";  // Strict positioning constraint — see §4.5.
   aspectRatio?: string;           // "width:height", e.g. "16:9". Meaningful only for
                                     //   freeform/mixed sections. Default: "1:1".
@@ -211,6 +212,31 @@ interface Section {
   metadata?: Record<string, unknown>;
 }
 ```
+
+#### 4.1.1 Section order
+
+A map's sections are ordered as follows, and two conformant consumers
+MUST derive the same order from the same document:
+
+1. Sections declaring `index` come first, sorted by `index` ascending.
+2. Sections with no `index` follow, in declaration order.
+3. Sections sharing an `index` keep their declaration order relative to
+   one another.
+
+`index` is an **ordering key, not a position**, exactly as it is for rows
+(§4.2.1). Sections declared at `index` 0 and `index` 5 with nothing
+between them are adjacent in the order — two sections, not six — and
+renumbering every section in a map changes nothing.
+
+Section order is the order in which a consumer presents a map's
+sections: in a list, a legend, a section picker, or a stacked rendering.
+It carries no geometry. Consistent with §2, this specification does not
+say how far apart two sections are drawn, nor on which edge of the screen
+the first one appears.
+
+If any section in a map declares `index`, every section in that map
+SHOULD declare one. A partially indexed set is still deterministic under
+the rule above, but is harder for a human to read.
 
 ### 4.2 RowMeta
 
@@ -230,7 +256,7 @@ defines the section's rows rather than merely annotating them.
 
 ```ts
 interface RowMeta {
-  id: string;                    // REQUIRED.
+  id: string;                    // REQUIRED. Unique within its section (§4.6).
   label?: string;
   index?: number;                 // Ordering key among rows in the section (§4.2.1).
                                     //   An ordering key, not a position.
@@ -391,7 +417,7 @@ independently on the section canvas.
 
 ```ts
 interface Element {
-  id: string;                     // REQUIRED.
+  id: string;                     // REQUIRED. Unique within the KerusiMap (§4.6).
   kind: string;                    // REQUIRED. "screen" | "stage" | "exit" | "lavatory"
                                      //   | "gap" | "aisle" | implementation-defined.
   label?: string;
@@ -545,11 +571,43 @@ otherwise leave two renderers to disagree about where an element sits or
 how much space it occupies — the element-side equivalent of the seat rule
 above.
 
+**Identifier uniqueness.** A reference is only well-defined if its target
+is: an id that appears twice resolves to two objects, and a consumer is
+left to pick one. Every `id` within a `KerusiMap` is therefore unique
+within the scope below:
+
+| Identifier | Unique within |
+|---|---|
+| `Seat.id` | the whole `KerusiMap`, across all sections (§4.3) |
+| `Section.id` | the whole `KerusiMap` |
+| `Element.id` | the whole `KerusiMap`, across all sections |
+| `SeatType.id` | `KerusiMap.legend` |
+| `PriceTier.id` | `KerusiMap.priceTiers` |
+| `RowMeta.id` | its own section's `rows` |
+
+`RowMeta.id` is scoped to its section because rows are: `Seat.row` and
+`Element.row` resolve only against their own section's registry, so two
+sections may each declare a row `"A"`. Each kind of identifier is its own
+namespace — a seat and an element MAY share an id, as MAY a seat type and
+a price tier — since no field references more than one kind.
+
+A conformant validator MUST reject a document that repeats an identifier
+within its scope. A duplicate `SeatType.id` or `PriceTier.id` makes the
+seat references that land on it ambiguous, and with them a seat's price
+(§4.9): two seat types `"standard"` declaring different
+`defaultPriceTier`s leave two renderers free to charge different amounts
+for the same seat. A duplicate `Section.id` or `Element.id` is not a
+reference target within this document, but it is the key by which
+anything outside the document — an availability panel, a per-section
+rendering override, an analytics event — identifies the object, and the
+same ambiguity follows.
+
 ### 4.7 SeatType (legend entry)
 
 ```ts
 interface SeatType {
-  id: string;                     // REQUIRED. e.g. "standard" | "recliner"
+  id: string;                     // REQUIRED. Unique within the KerusiMap (§4.6).
+                                     //   e.g. "standard" | "recliner"
                                      //   | "wheelchair" | "business".
   label?: string | Record<string, string>;
   color?: string;                  // Suggested render color, hex. Non-normative hint.
@@ -561,7 +619,7 @@ interface SeatType {
 
 ```ts
 interface PriceTier {
-  id: string;                     // REQUIRED.
+  id: string;                     // REQUIRED. Unique within the KerusiMap (§4.6).
   label?: string;
   price: Money;                    // REQUIRED.
 }
@@ -1107,10 +1165,11 @@ A consumer (renderer, validator, or intermediary) is conformant if it:
 - correctly merges a `KerusiState` onto a `KerusiMap` by `Seat.id`
   (§3);
 - enforces the referential-integrity rules of §4.6, including
-  `companions` symmetry;
+  `companions` symmetry and identifier uniqueness;
 - enforces `Section.layout` consistency (§4.5–§4.6), rejecting any
   section whose seats do not conform to their declared or inferred
   `layout` mode;
+- orders a map's sections as defined by §4.1.1;
 - materializes every row a section declares, including rows no seat
   references, in the order defined by §4.2.1 (§4.2.2);
 - enforces the element positioning and sizing rules of §4.4.1, including
@@ -1128,7 +1187,8 @@ version (§8) so that conformance can be checked mechanically rather than
 by inspection of this document.
 
 Rejecting a document with a dangling `row`/`type`/`priceTier`/`companions`
-reference, or a layout-inconsistent section (§4.6), is deliberately
+reference, a duplicate identifier, or a layout-inconsistent section
+(§4.6), is deliberately
 strict rather than lenient: silently dropping or mis-pricing the affected
 seat instead would hide a producer/consumer sync bug behind a
 customer-facing symptom, at exactly the point where it is most expensive
@@ -1225,6 +1285,35 @@ semantics (resolved as intentionally delegated to the booking engine,
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 14** — Closed two gaps around sections.
+
+  **Section order.** `Section.index` carried only an interface comment,
+  "Display order among sections", so nothing said where unindexed
+  sections go, what two sections sharing an `index` do, or whether a gap
+  in `index` means anything. New §4.1.1 applies the §4.2.1 row rule to
+  sections unchanged: indexed sections first by `index` ascending,
+  unindexed ones after in declaration order, ties in declaration order,
+  and `index` an ordering key rather than a position. This is the reading
+  implementations already took, and it is additive: no previously valid
+  document changes meaning.
+
+  **Identifier uniqueness.** Only `Seat.id` was required to be unique
+  within a map. §4.6 now states a scope for every id in a `KerusiMap`:
+  `Section.id`, `Element.id`, `SeatType.id` and `PriceTier.id` are unique
+  within the map, and `RowMeta.id` within its section, matching the
+  section scoping of row references. `SeatType.id`, `PriceTier.id` and
+  `RowMeta.id` are reference targets, so a duplicate made a reference
+  resolve twice, a case the "fails to resolve" rule did not cover; and a
+  seat type declared twice with different `defaultPriceTier`s made a
+  seat's price ambiguous under §4.9. Validators already disagreed here,
+  with at least one rejecting duplicate section and element ids by
+  citing sections that did not say so. `Element.id` is scoped to the whole
+  map, like `Seat.id`, rather than to its section; this is the stricter
+  choice, chosen so that every map-level id follows one rule.
+
+  The uniqueness rules are a restriction on producers, not an additive
+  change. A duplicate id of any of these kinds is almost certainly a
+  producer bug, and none of the examples in §6 contains one.
 - **1.0.0-draft, rev 13** — Narrowed the timestamp requirement from "ISO
   8601" to an **RFC 3339 `date-time`**, stated once in a new §5.1.1 and
   referenced from every timestamp field (`KerusiState.updatedAt`,

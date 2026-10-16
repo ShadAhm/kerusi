@@ -24,7 +24,7 @@ import addFormats from 'ajv-formats';
 
 import { checkDeltaStream, checkMap } from './semantic-rules.mjs';
 
-export { checkDeltaStream, checkMap, effectiveLayout, inferLayout, rowOrder } from './semantic-rules.mjs';
+export { checkDeltaStream, checkMap, effectiveLayout, inferLayout, rowOrder, sectionOrder } from './semantic-rules.mjs';
 
 const schemaDir = dirname(fileURLToPath(import.meta.url));
 

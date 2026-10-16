@@ -1,0 +1,32 @@
+{
+  "kerusi": "1.0",
+  "id": "duplicate-row-ids",
+  "legend": [
+    {
+      "id": "standard"
+    }
+  ],
+  "sections": [
+    {
+      "id": "s",
+      "rows": [
+        {
+          "id": "A",
+          "index": 0
+        },
+        {
+          "id": "A",
+          "index": 1
+        }
+      ],
+      "seats": [
+        {
+          "id": "A1",
+          "col": 1,
+          "type": "standard",
+          "row": "A"
+        }
+      ]
+    }
+  ]
+}

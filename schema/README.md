@@ -88,8 +88,9 @@ const { valid, errors } = kerusi.validateDeltaStream(deltasInReceiptOrder);
 ```
 
 [`semantic-rules.mjs`](semantic-rules.mjs) exports the same rules with no
-dependency on ajv — `checkMap`, `checkDeltaStream`, and the `rowOrder`,
-`inferLayout` and `effectiveLayout` helpers a renderer needs anyway — for a
+dependency on ajv — `checkMap`, `checkDeltaStream`, and the `sectionOrder`
+(§4.1.1), `rowOrder` (§4.2.1), `inferLayout` and `effectiveLayout` helpers a
+renderer needs anyway — for a
 consumer that validates against the schemas by other means.
 
 ### Running under ajv
@@ -187,6 +188,9 @@ applies.
 | Element row span within the section's row order | §4.4.1, §4.6 | `element-row-span-overrun` | [`element-rowspan-overruns`](../examples/validator-only/element-rowspan-overruns.map.kerusi.json) |
 | One currency across the whole map | §4.9 | `map-currency-mixed` | [`mixed-currencies`](../examples/validator-only/mixed-currencies.map.kerusi.json) |
 | `Seat.id` uniqueness across the whole map | §4.3 | `seat-id-duplicate` | [`duplicate-seat-ids`](../examples/validator-only/duplicate-seat-ids.map.kerusi.json) |
+| `Section.id` and `Element.id` uniqueness across the whole map | §4.6 | `section-id-duplicate`, `element-id-duplicate` | [`duplicate-section-ids`](../examples/validator-only/duplicate-section-ids.map.kerusi.json), [`duplicate-element-ids`](../examples/validator-only/duplicate-element-ids.map.kerusi.json) |
+| `RowMeta.id` uniqueness within its section | §4.6 | `row-id-duplicate` | [`duplicate-row-ids`](../examples/validator-only/duplicate-row-ids.map.kerusi.json) |
+| `SeatType.id` and `PriceTier.id` uniqueness within the map | §4.6 | `seat-type-id-duplicate`, `price-tier-id-duplicate` | [`duplicate-seat-type-ids`](../examples/validator-only/duplicate-seat-type-ids.map.kerusi.json), [`duplicate-price-tier-ids`](../examples/validator-only/duplicate-price-tier-ids.map.kerusi.json) |
 | `updatedAt` strictly increasing across a delta stream | §5.2 | `delta-updated-at-not-increasing`, via `validateDeltaStream` | stream cases in [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
 
 Two notes on scope:
@@ -231,8 +235,9 @@ registered extension.
   conformant validator MUST reject: dangling `type`/`priceTier`/`row`
   references, asymmetric `companions`, a section whose omitted `layout` cannot
   be consistently inferred, an element row span that overruns the section,
-  mixed currencies, and duplicate `Seat.id`s. One per rule family in the table
-  above, and the fixture set the validator is tested against.
+  mixed currencies, and a duplicate id of each kind — seat, section, element
+  (across two sections), row, seat type and price tier. At least one per row of
+  the table above, and the fixture set the validator is tested against.
 
 Run the corpus through both stages of the validator:
 
@@ -247,5 +252,5 @@ semantic rules reject belongs in `validator-only/` instead), and that each
 `validator-only/` document passes the schema and then produces exactly the rule
 code and JSON Pointer expected of it — not merely that it failed somehow. It
 finishes with [`test/semantic-cases.mjs`](test/semantic-cases.mjs), which covers
-what a corpus of single files cannot: the accepting side of each rule, the row
-ordering of §4.2.1, and delta-stream monotonicity.
+what a corpus of single files cannot: the accepting side of each rule, the
+section and row ordering of §4.1.1 and §4.2.1, and delta-stream monotonicity.
