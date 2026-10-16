@@ -29,23 +29,44 @@ const quote = (v) => JSON.stringify(String(v));
 const listing = (values) => values.map(quote).join(', ');
 
 /**
- * Row order per section 4.2.1: rows declaring `index` first, sorted ascending;
- * rows with no `index` after them in declaration order; ties keep declaration
- * order. Two conformant consumers MUST derive the same order from the same
+ * The ordering rule sections 4.1.1 and 4.2.1 share: items declaring `index`
+ * first, sorted ascending; items with no `index` after them in declaration
+ * order; ties keep declaration order. `index` is an ordering key, not a
+ * position. Two conformant consumers MUST derive the same order from the same
  * document, so this is a stable sort over a decorated copy.
+ *
+ * @param {unknown[]} items
+ * @returns {string[]} the items' ids in order
+ */
+function byIndexKey(items) {
+  const indexed = [];
+  const unindexed = [];
+  items.forEach((item, i) => {
+    (has(item, 'index') && typeof item.index === 'number' ? indexed : unindexed).push({ item, i });
+  });
+  indexed.sort((a, b) => a.item.index - b.item.index || a.i - b.i);
+  return [...indexed, ...unindexed].map(({ item }) => item?.id);
+}
+
+/**
+ * Row order per section 4.2.1.
  *
  * @param {object} section
  * @returns {string[]} row ids in order, empty when the section declares no rows
  */
 export function rowOrder(section) {
-  const rows = arr(section?.rows);
-  const indexed = [];
-  const unindexed = [];
-  rows.forEach((row, i) => {
-    (has(row, 'index') && typeof row.index === 'number' ? indexed : unindexed).push({ row, i });
-  });
-  indexed.sort((a, b) => a.row.index - b.row.index || a.i - b.i);
-  return [...indexed, ...unindexed].map(({ row }) => row?.id);
+  return byIndexKey(arr(section?.rows));
+}
+
+/**
+ * Section order per section 4.1.1: the row rule of section 4.2.1, applied to
+ * a map's sections.
+ *
+ * @param {object} map
+ * @returns {string[]} section ids in order
+ */
+export function sectionOrder(map) {
+  return byIndexKey(arr(map?.sections));
 }
 
 /**
@@ -394,26 +415,69 @@ function checkSingleCurrency(map, out) {
   }
 }
 
-// (7b) Seat.id is unique across the whole map, not merely within a section
-//      (section 4.3).
-function checkSeatIdUniqueness(map, out) {
+// (7b) Identifier uniqueness (sections 4.3 and 4.6). Each kind of id is its
+//      own namespace, unique within the scope the spec gives it: the whole map
+//      for seats, sections, elements, seat types and price tiers; its own
+//      section for rows. `groups` is one scope's worth of collections, each
+//      paired with the path tokens of the array it came from.
+function reportDuplicateIds(groups, { rule, spec, kind, scope }, out) {
   const first = new Map();
-  arr(map.sections).forEach((section, s) => {
-    arr(section?.seats).forEach((seat, i) => {
-      if (!has(seat, 'id')) return;
-      const path = ptr('sections', s, 'seats', i, 'id');
-      if (!first.has(seat.id)) {
-        first.set(seat.id, path);
+  for (const { items, at } of groups) {
+    arr(items).forEach((item, i) => {
+      if (!has(item, 'id')) return;
+      const path = ptr(...at, i, 'id');
+      if (!first.has(item.id)) {
+        first.set(item.id, path);
         return;
       }
       out.push({
-        rule: 'seat-id-duplicate',
-        spec: '4.3',
+        rule,
+        spec,
         path,
-        message: `seat id ${quote(seat.id)} is already used at ${first.get(seat.id)}; Seat.id is unique across the whole map`
+        message: `${kind} id ${quote(item.id)} is already used at ${first.get(item.id)}; ${scope}`
       });
     });
-  });
+  }
+}
+
+function checkIdUniqueness(map, out) {
+  const sections = arr(map.sections);
+  const perSection = (key) => sections.map((section, s) => ({ items: section?.[key], at: ['sections', s, key] }));
+
+  reportDuplicateIds(
+    [{ items: sections, at: ['sections'] }],
+    { rule: 'section-id-duplicate', spec: '4.6', kind: 'section', scope: 'Section.id is unique within the map' },
+    out
+  );
+  reportDuplicateIds(
+    perSection('seats'),
+    { rule: 'seat-id-duplicate', spec: '4.3', kind: 'seat', scope: 'Seat.id is unique across the whole map' },
+    out
+  );
+  reportDuplicateIds(
+    perSection('elements'),
+    { rule: 'element-id-duplicate', spec: '4.6', kind: 'element', scope: 'Element.id is unique across the whole map' },
+    out
+  );
+  // Rows are section-scoped, as row references are, so each section is a
+  // scope of its own.
+  for (const group of perSection('rows')) {
+    reportDuplicateIds(
+      [group],
+      { rule: 'row-id-duplicate', spec: '4.6', kind: 'row', scope: 'RowMeta.id is unique within its section' },
+      out
+    );
+  }
+  reportDuplicateIds(
+    [{ items: map.legend, at: ['legend'] }],
+    { rule: 'seat-type-id-duplicate', spec: '4.6', kind: 'seat type', scope: 'SeatType.id is unique within the legend' },
+    out
+  );
+  reportDuplicateIds(
+    [{ items: map.priceTiers, at: ['priceTiers'] }],
+    { rule: 'price-tier-id-duplicate', spec: '4.6', kind: 'price tier', scope: 'PriceTier.id is unique within the map' },
+    out
+  );
 }
 
 /**
@@ -436,7 +500,7 @@ export function checkMap(map) {
   checkLayout(map, errors);
   checkElementRowSpans(map, errors);
   checkSingleCurrency(map, errors);
-  checkSeatIdUniqueness(map, errors);
+  checkIdUniqueness(map, errors);
   return errors;
 }
 

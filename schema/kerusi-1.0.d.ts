@@ -48,10 +48,15 @@ export interface KerusiMap {
  * seat's position is a property of the seat, not a slot in a shared array.
  */
 export interface Section {
+  /** Unique within the KerusiMap (section 4.6). */
   id: string;
   /** String, or locale map: { "en": "Orchestra", "ms": "Orkestra" }. */
   label?: LocalizableString;
-  /** Display order among sections. */
+  /**
+   * Ordering key among sections (section 4.1.1) — an ordering key, not a
+   * position. Indexed sections come first, ascending; unindexed ones follow in
+   * declaration order; ties keep declaration order.
+   */
   index?: number;
   /**
    * A strict, validated positioning constraint, not a rendering hint
@@ -88,6 +93,7 @@ export interface Section {
  * space in the section's row order (section 4.2.2).
  */
 export interface RowMeta {
+  /** Unique within its section; another section MAY reuse it (section 4.6). */
   id: string;
   label?: string;
   /**
@@ -151,6 +157,7 @@ export interface Accessibility {
  * to the same positioning constraint as its section's seats (section 4.4.1).
  */
 export interface Element {
+  /** Unique within the whole KerusiMap, not merely within its section (section 4.6). */
   id: string;
   /** "screen" | "stage" | "exit" | "lavatory" | "gap" | "aisle" | implementation-defined. */
   kind: string;
@@ -177,7 +184,7 @@ export interface Element {
 
 /** A legend entry (section 4.7). */
 export interface SeatType {
-  /** e.g. "standard" | "recliner" | "wheelchair" | "business". */
+  /** Unique within the legend (section 4.6). e.g. "standard" | "recliner" | "wheelchair" | "business". */
   id: string;
   label?: LocalizableString;
   /** Suggested render color, hex. Non-normative hint. */
@@ -187,6 +194,7 @@ export interface SeatType {
 }
 
 export interface PriceTier {
+  /** Unique within the KerusiMap (section 4.6). */
   id: string;
   label?: string;
   price: Money;

@@ -41,7 +41,12 @@ const EXPECTED = {
   'inferred-layout-inconsistent.map.kerusi.json': [['layout-inference-inconsistent', '/sections/0']],
   'element-rowspan-overruns.map.kerusi.json': [['element-row-span-overrun', '/sections/0/elements/0/height']],
   'mixed-currencies.map.kerusi.json': [['map-currency-mixed', '/priceTiers/1/price/currency']],
-  'duplicate-seat-ids.map.kerusi.json': [['seat-id-duplicate', '/sections/1/seats/0/id']]
+  'duplicate-seat-ids.map.kerusi.json': [['seat-id-duplicate', '/sections/1/seats/0/id']],
+  'duplicate-section-ids.map.kerusi.json': [['section-id-duplicate', '/sections/1/id']],
+  'duplicate-element-ids.map.kerusi.json': [['element-id-duplicate', '/sections/1/elements/0/id']],
+  'duplicate-row-ids.map.kerusi.json': [['row-id-duplicate', '/sections/0/rows/1/id']],
+  'duplicate-seat-type-ids.map.kerusi.json': [['seat-type-id-duplicate', '/legend/1/id']],
+  'duplicate-price-tier-ids.map.kerusi.json': [['price-tier-id-duplicate', '/priceTiers/1/id']]
 };
 
 const filesIn = (dir) =>

@@ -5,7 +5,7 @@
 //
 // Run from validate-examples.mjs, which is the single entry point (`npm test`).
 
-import { checkDeltaStream, checkMap, effectiveLayout, rowOrder } from '../semantic-rules.mjs';
+import { checkDeltaStream, checkMap, effectiveLayout, rowOrder, sectionOrder } from '../semantic-rules.mjs';
 
 const legend = [{ id: 'standard' }];
 
@@ -143,6 +143,28 @@ const cases = [
     }
   },
 
+  // --- section order (section 4.1.1) ------------------------------------
+  {
+    name: 'section order puts indexed sections first (ascending), then unindexed ones in declaration order',
+    run: () => {
+      const order = sectionOrder({
+        sections: [{ id: 'late' }, { id: 'B', index: 5 }, { id: 'tie2', index: 5 }, { id: 'A', index: 0 }, { id: 'later' }]
+      });
+      const want = 'A,B,tie2,late,later';
+      return order.join(',') === want ? [] : [`section order ${order.join(',')}, expected ${want}`];
+    }
+  },
+  {
+    name: 'a section index is an ordering key, not a position: 0 and 5 order the same as 0 and 1',
+    run: () => {
+      const gap = sectionOrder({ sections: [{ id: 'b', index: 5 }, { id: 'a', index: 0 }] });
+      const dense = sectionOrder({ sections: [{ id: 'b', index: 1 }, { id: 'a', index: 0 }] });
+      return gap.join(',') === dense.join(',') && gap.join(',') === 'a,b'
+        ? []
+        : [`gap gave ${gap.join(',')}, dense gave ${dense.join(',')}, expected a,b for both`];
+    }
+  },
+
   // --- (6) element row spans --------------------------------------------
   {
     name: 'an element row span that ends exactly on the last row is accepted, one past it is not',
@@ -252,7 +274,7 @@ const cases = [
     }
   },
 
-  // --- (7b) seat id uniqueness -------------------------------------------
+  // --- (7b) id uniqueness ------------------------------------------------
   {
     name: 'a duplicate Seat.id within one section is rejected',
     run: () => {
@@ -261,6 +283,43 @@ const cases = [
         ? []
         : [`expected seat-id-duplicate at /sections/0/seats/1/id, got ${JSON.stringify(errors)}`];
     }
+  },
+  {
+    name: 'a duplicate Element.id within one section is rejected',
+    run: () => {
+      const errors = checkMap(
+        mapWith({
+          seats: [gridSeat('a', 1)],
+          elements: [
+            { id: 'e', kind: 'exit', col: 2 },
+            { id: 'e', kind: 'exit', col: 3 }
+          ]
+        })
+      );
+      return errors.length === 1 && errors[0].rule === 'element-id-duplicate' && errors[0].path === '/sections/0/elements/1/id'
+        ? []
+        : [`expected one element-id-duplicate at /sections/0/elements/1/id, got ${JSON.stringify(errors)}`];
+    }
+  },
+  {
+    name: 'two sections may each declare a row with the same id: RowMeta.id is section-scoped',
+    run: () =>
+      checkMap({
+        kerusi: '1.0',
+        id: 'case',
+        legend,
+        sections: [
+          { id: 's1', rows: [{ id: 'A' }], seats: [{ ...gridSeat('a1', 1), row: 'A' }] },
+          { id: 's2', rows: [{ id: 'A' }], seats: [{ ...gridSeat('b1', 1), row: 'A' }] }
+        ]
+      }).map((e) => `unexpected ${e.rule} at ${e.path}`)
+  },
+  {
+    name: 'each kind of id is its own namespace: a seat, an element and a section may share an id',
+    run: () =>
+      checkMap(
+        mapWith({ id: 'x', seats: [gridSeat('x', 1)], elements: [{ id: 'x', kind: 'exit', col: 2 }] })
+      ).map((e) => `unexpected ${e.rule} at ${e.path}`)
   },
 
   // --- (7c) delta stream monotonicity (section 5.2) ----------------------
