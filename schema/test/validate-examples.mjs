@@ -38,8 +38,10 @@ const EXPECTED = {
   'dangling-price-tier.map.kerusi.json': [['seat-price-tier-unresolved', '/sections/0/seats/0/priceTier']],
   'dangling-row.map.kerusi.json': [['seat-row-unresolved', '/sections/0/seats/0/row']],
   'asymmetric-companions.map.kerusi.json': [['companion-asymmetric', '/sections/0/seats/0/companions/0']],
-  'inferred-layout-inconsistent.map.kerusi.json': [['layout-inference-inconsistent', '/sections/0']],
-  'element-rowspan-overruns.map.kerusi.json': [['element-row-span-overrun', '/sections/0/elements/0/height']],
+  'seat-outside-canvas.map.kerusi.json': [['seat-outside-canvas', '/sections/0/seats/0/x']],
+  'element-outside-canvas.map.kerusi.json': [['element-outside-canvas', '/sections/0/elements/0/y']],
+  'duplicate-row-col.map.kerusi.json': [['seat-row-col-duplicate', '/sections/0/seats/1/col']],
+  'row-shape-cols-reversed.map.kerusi.json': [['row-shape-cols-reversed', '/sections/0/rows/0/shape/line/cols']],
   'mixed-currencies.map.kerusi.json': [['map-currency-mixed', '/priceTiers/1/price/currency']],
   'duplicate-seat-ids.map.kerusi.json': [['seat-id-duplicate', '/sections/1/seats/0/id']],
   'duplicate-section-ids.map.kerusi.json': [['section-id-duplicate', '/sections/1/id']],
@@ -67,19 +69,21 @@ const show = (errors) => {
 
 let failures = 0;
 
-// examples/ — conformant documents. Nothing may reject them.
+// examples/ — conformant documents. Nothing may reject them, and as examples
+// they should not draw a warning either: no overlapping seats, no seat outside
+// its section's bounds.
 const checkValid = () => {
   const files = filesIn('.');
-  console.log(`\nValid examples — MUST pass schema and validator (${files.length})`);
+  console.log(`\nValid examples — MUST pass schema and validator, with no warnings (${files.length})`);
   for (const name of files) {
-    const { valid, errors } = validateFile('.', name);
-    if (valid) {
+    const { valid, errors, warnings } = validateFile('.', name);
+    if (valid && warnings.length === 0) {
       console.log(`  pass  ${name}`);
       continue;
     }
     failures++;
-    console.log(`  FAIL  ${name} — expected no errors, got ${errors.length}`);
-    show(errors);
+    console.log(`  FAIL  ${name} — expected no errors or warnings, got ${errors.length} and ${warnings.length}`);
+    show([...errors, ...warnings]);
   }
 };
 

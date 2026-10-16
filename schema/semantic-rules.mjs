@@ -1,5 +1,5 @@
-// The seven rule families of the Kerusi standard that JSON Schema cannot
-// express, as tabulated in schema/README.md.
+// The rule families of the Kerusi standard that JSON Schema cannot express,
+// as tabulated in schema/README.md.
 //
 // This module is deliberately dependency-free: section 8 of the spec names
 // `@kerusi/schema` (JSON Schema plus TypeScript types) as a package with no
@@ -9,6 +9,10 @@
 // Every check reports a JSON Pointer (RFC 6901) to the offending node rather
 // than throwing, and no check short-circuits another: a document with a
 // dangling seat type and mixed currencies reports both.
+//
+// `checkMap` returns what a conformant validator MUST reject. `lintMap` returns
+// what it SHOULD report without rejecting: overlapping seats (section 4.3.1)
+// and seats outside their section's bounds (section 4.1).
 
 /** @typedef {{ rule: string, spec: string, path: string, message: string }} KerusiError */
 
@@ -22,11 +26,15 @@ const has = (obj, key) =>
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
 const arr = (v) => (Array.isArray(v) ? v : []);
 
 const quote = (v) => JSON.stringify(String(v));
 
 const listing = (values) => values.map(quote).join(', ');
+
+const rad = (degrees) => (degrees * Math.PI) / 180;
 
 /**
  * The ordering rule sections 4.1.1 and 4.2.1 share: items declaring `index`
@@ -70,35 +78,75 @@ export function sectionOrder(map) {
 }
 
 /**
- * Layout inference per section 4.5, for a section that declares no `layout`.
- * Inference never yields "mixed" — that mode MUST be declared explicitly.
+ * The seat size that applies within a section (section 4.5): the section's own
+ * `seatSize` when it declares one, the map's otherwise.
  *
- * @param {object} section
- * @returns {'grid'|'freeform'|'inconsistent'|'indeterminate'}
+ * @param {object} map
+ * @param {object} [section]
+ * @returns {number|undefined}
  */
-export function inferLayout(section) {
-  const seats = arr(section?.seats);
-  if (seats.length === 0) return 'indeterminate';
-  const everyCol = seats.every((s) => has(s, 'col'));
-  const noXY = seats.every((s) => !has(s, 'x') && !has(s, 'y'));
-  const everyXY = seats.every((s) => has(s, 'x') && has(s, 'y'));
-  const noCol = seats.every((s) => !has(s, 'col'));
-  if (everyCol && noXY) return 'grid';
-  if (everyXY && noCol) return 'freeform';
-  return 'inconsistent';
+export function seatSizeOf(map, section) {
+  if (isNum(section?.seatSize)) return section.seatSize;
+  return isNum(map?.seatSize) ? map.seatSize : undefined;
 }
 
 /**
- * The mode a section's seats and elements are checked against: the declared
- * `layout` when there is one, the inferred mode otherwise.
+ * Whether two seats of the SAME section are neighbours (section 4.3.5): same
+ * row, and cols that differ by exactly 1. Nothing else implies adjacency — not
+ * distance, not labels, not array order. The caller is responsible for the two
+ * seats being in one section, since seats in different sections never are.
  *
- * @param {object} section
- * @returns {'grid'|'freeform'|'mixed'|'inconsistent'|'indeterminate'}
+ * @param {object} a
+ * @param {object} b
+ * @returns {boolean}
  */
-export function effectiveLayout(section) {
-  const declared = section?.layout;
-  if (declared === 'grid' || declared === 'freeform' || declared === 'mixed') return declared;
-  return inferLayout(section);
+export function areNeighbours(a, b) {
+  if (!has(a, 'row') || !has(b, 'row') || a.row !== b.row) return false;
+  if (!Number.isInteger(a.col) || !Number.isInteger(b.col)) return false;
+  return Math.abs(a.col - b.col) === 1;
+}
+
+/**
+ * The guide point of column `col` on a row shape (section 4.2.3). Returns null
+ * when the column lies outside the shape's `cols` range, or the shape is not
+ * one this specification defines.
+ *
+ * @param {object} shape a RowMeta.shape
+ * @param {number} col
+ * @returns {[number, number]|null}
+ */
+export function guidePoint(shape, col) {
+  const onCircle = (center, radius, degrees) => [
+    center[0] + radius * Math.cos(rad(degrees)),
+    center[1] + radius * Math.sin(rad(degrees))
+  ];
+  const kind = ['line', 'arc', 'circle'].find((k) => has(shape, k));
+  if (!kind) return null;
+  const g = shape[kind];
+  const [a, b] = arr(g?.cols);
+  if (!Number.isInteger(col) || !Number.isInteger(a) || !Number.isInteger(b) || col < a || col > b) return null;
+  const t = a === b ? 0 : (col - a) / (b - a);
+  if (kind === 'line') {
+    return [g.from[0] + (g.to[0] - g.from[0]) * t, g.from[1] + (g.to[1] - g.from[1]) * t];
+  }
+  if (kind === 'arc') return onCircle(g.center, g.radius, g.start + g.sweep * t);
+  return onCircle(g.center, g.radius, g.start + (360 * (col - a)) / (b - a + 1));
+}
+
+/**
+ * Whether a seat lies on its guide (section 4.2.3): within `seatSize / 4` of
+ * its guide point. Only editors use this, to decide which seats to move when a
+ * guide is changed; renderers never do.
+ *
+ * @param {object} seat
+ * @param {object} shape its row's RowMeta.shape
+ * @param {number} seatSize the seat size that applies to the seat's section
+ * @returns {boolean}
+ */
+export function isOnGuide(seat, shape, seatSize) {
+  const point = guidePoint(shape, seat?.col);
+  if (!point || !isNum(seat?.x) || !isNum(seat?.y)) return false;
+  return Math.hypot(seat.x - point[0], seat.y - point[1]) <= seatSize / 4;
 }
 
 // --- rule families ---------------------------------------------------------
@@ -146,24 +194,22 @@ function checkPriceTierRefs(map, out) {
   });
 }
 
-// (3) Seat.row / Element.row resolve against Section.rows[].id, but only when
-//     the section declares `rows`. With no registry, `row` is opaque free text
-//     with nothing to resolve against, and is always valid (section 4.6).
+// (3) Seat.row resolves against Section.rows[].id, but only when the section
+//     declares `rows`. With no registry, `row` is opaque free text with nothing
+//     to resolve against, and is always valid (section 4.6).
 function checkRowRefs(map, out) {
   arr(map.sections).forEach((section, s) => {
     if (!has(section, 'rows')) return;
     const known = new Set(arr(section.rows).map((r) => r?.id));
-    const check = (node, kind, collection, i) => {
-      if (!has(node, 'row') || known.has(node.row)) return;
+    arr(section.seats).forEach((seat, i) => {
+      if (!has(seat, 'row') || known.has(seat.row)) return;
       out.push({
-        rule: `${kind}-row-unresolved`,
+        rule: 'seat-row-unresolved',
         spec: '4.6',
-        path: ptr('sections', s, collection, i, 'row'),
-        message: `${kind} ${quote(node.id)} is in row ${quote(node.row)}, which section ${quote(section.id)} does not declare`
+        path: ptr('sections', s, 'seats', i, 'row'),
+        message: `seat ${quote(seat.id)} is in row ${quote(seat.row)}, which section ${quote(section.id)} does not declare`
       });
-    };
-    arr(section.seats).forEach((seat, i) => check(seat, 'seat', 'seats', i));
-    arr(section.elements).forEach((el, i) => check(el, 'element', 'elements', i));
+    });
   });
 }
 
@@ -258,136 +304,79 @@ function checkCompanions(map, out) {
   });
 }
 
-// (5) Layout inference (section 4.5), then the per-mode positioning rules of
-//     sections 4.5 and 4.4.1 for seats *and* elements. The schemas apply those
-//     per-mode rules only to a section that declares `layout`; they are applied
-//     here to every section, so this module is correct on its own.
-function checkLayout(map, out) {
-  arr(map.sections).forEach((section, s) => {
-    if (!isObject(section)) return;
-    const mode = effectiveLayout(section);
-
-    if (mode === 'inconsistent') {
-      const seats = arr(section.seats);
-      const gridAddressed = seats.filter((seat) => has(seat, 'col') && !has(seat, 'x') && !has(seat, 'y'));
-      const freeformAddressed = seats.filter((seat) => has(seat, 'x') && has(seat, 'y') && !has(seat, 'col'));
-      const rest = seats.filter((seat) => !gridAddressed.includes(seat) && !freeformAddressed.includes(seat));
-      const offenders = (rest.length > 0 ? rest : seats).map((seat) => seat?.id);
+// (5) Every seat and element lies on the canvas: 0 <= x <= canvas.width and
+//     0 <= y <= canvas.height (sections 4.3.1 and 4.4.1). The schema bounds
+//     each coordinate below at 0; the upper bound depends on the document.
+function checkCanvasBounds(map, out) {
+  const { width, height } = isObject(map.canvas) ? map.canvas : {};
+  const limits = { x: isNum(width) ? width : undefined, y: isNum(height) ? height : undefined };
+  const check = (node, kind, s, collection, i) => {
+    for (const axis of ['x', 'y']) {
+      const limit = limits[axis];
+      const v = node?.[axis];
+      if (limit === undefined || !isNum(v) || (v >= 0 && v <= limit)) continue;
       out.push({
-        rule: 'layout-inference-inconsistent',
-        spec: '4.5',
-        path: ptr('sections', s),
+        rule: `${kind}-outside-canvas`,
+        spec: kind === 'seat' ? '4.3.1' : '4.4.1',
+        path: ptr('sections', s, collection, i, axis),
         message:
-          `section ${quote(section.id)} declares no layout, and its seats are neither all grid-addressed (every seat ` +
-          'carrying col, none carrying x or y) nor all freeform-addressed (every seat carrying x and y, none carrying ' +
-          `col); see ${listing(offenders)}. Inference never yields "mixed", which MUST be declared explicitly`
+          `${kind} ${quote(node.id)} has ${axis} ${v}, outside the canvas ` +
+          `(0 to ${limit}, the canvas ${axis === 'x' ? 'width' : 'height'})`
       });
-      return; // no mode to check the seats and elements against
     }
-    // A section with no seats and no declared layout has nothing to infer
-    // from; the spec defines no fallback, so its elements go unchecked here.
-    if (mode === 'indeterminate') return;
-
-    const seatFault = {
-      grid: (seat) =>
-        !has(seat, 'col') ? 'MUST carry col' : has(seat, 'x') || has(seat, 'y') ? 'MUST NOT carry x or y' : null,
-      freeform: (seat) =>
-        !has(seat, 'x') || !has(seat, 'y')
-          ? 'MUST carry both x and y'
-          : has(seat, 'col')
-            ? 'MUST NOT carry col'
-            : null,
-      mixed: (seat) => (has(seat, 'col') && has(seat, 'x') && has(seat, 'y') ? null : 'MUST carry col and both x and y')
-    }[mode];
-
-    const elementFault = {
-      grid: (el) =>
-        !has(el, 'row') && !has(el, 'col')
-          ? 'MUST be positioned by row and/or col'
-          : has(el, 'x') || has(el, 'y')
-            ? 'MUST NOT carry x or y'
-            : null,
-      freeform: (el) =>
-        !has(el, 'x') || !has(el, 'y')
-          ? 'MUST be positioned by x and y'
-          : has(el, 'col')
-            ? 'MUST NOT carry col'
-            : null,
-      mixed: (el) =>
-        has(el, 'row') || has(el, 'col') || (has(el, 'x') && has(el, 'y'))
-          ? null
-          : 'MUST be positioned by row and/or col, or by x and y'
-    }[mode];
-
-    arr(section.seats).forEach((seat, i) => {
-      const fault = seatFault(seat);
-      if (!fault) return;
-      out.push({
-        rule: 'seat-layout-mismatch',
-        spec: '4.5',
-        path: ptr('sections', s, 'seats', i),
-        message: `seat ${quote(seat?.id)} in ${quote(mode)} section ${quote(section.id)} ${fault}`
-      });
-    });
-
-    arr(section.elements).forEach((el, i) => {
-      const fault = elementFault(el);
-      if (fault) {
-        out.push({
-          rule: 'element-layout-mismatch',
-          spec: '4.4.1',
-          path: ptr('sections', s, 'elements', i),
-          message: `element ${quote(el?.id)} in ${quote(mode)} section ${quote(section.id)} ${fault}`
-        });
-      }
-      // Spans are cell counts for a grid-addressed element, and percentages
-      // once x/y governs its placement (section 4.4.1).
-      const gridAddressed = mode === 'grid' || (mode === 'mixed' && !has(el, 'x') && !has(el, 'y'));
-      if (!gridAddressed) return;
-      for (const dim of ['width', 'height']) {
-        if (!has(el, dim)) continue;
-        if (Number.isInteger(el[dim]) && el[dim] >= 1) continue;
-        out.push({
-          rule: 'element-span-invalid',
-          spec: '4.4.1',
-          path: ptr('sections', s, 'elements', i, dim),
-          message:
-            `element ${quote(el?.id)} is grid-addressed, so its ${dim} is a cell span and MUST be a positive integer, ` +
-            `not ${JSON.stringify(el[dim])}`
-        });
-      }
-    });
-  });
-}
-
-// (6) An element's row span MUST NOT extend past the last row in the section's
-//     row order (sections 4.2.1, 4.4.1 and 4.6). Scoped, as section 4.6 scopes
-//     it, to a "grid" section — declared or inferred — and only where the
-//     section declares the row registry that bounds the span.
-function checkElementRowSpans(map, out) {
+  };
   arr(map.sections).forEach((section, s) => {
-    if (!isObject(section) || effectiveLayout(section) !== 'grid' || !has(section, 'rows')) return;
-    const order = rowOrder(section);
-    arr(section.elements).forEach((el, i) => {
-      if (!has(el, 'row')) return; // no row anchor, so nothing to bound
-      const start = order.indexOf(el.row);
-      if (start < 0) return; // dangling row reference, already reported
-      const height = has(el, 'height') ? el.height : 1;
-      if (!Number.isInteger(height) || height < 1) return; // reported as an invalid span
-      if (start + height <= order.length) return;
+    arr(section?.seats).forEach((seat, i) => check(seat, 'seat', s, 'seats', i));
+    arr(section?.elements).forEach((el, i) => check(el, 'element', s, 'elements', i));
+  });
+}
+
+// (6) Within a section, no two seats share the same row and col (section
+//     4.3.5): a (row, col) pair names one place in the adjacency order, and two
+//     seats in it would leave "the seat next to this one" ambiguous.
+function checkRowColUniqueness(map, out) {
+  arr(map.sections).forEach((section, s) => {
+    const first = new Map();
+    arr(section?.seats).forEach((seat, i) => {
+      if (!has(seat, 'row') || !has(seat, 'col')) return;
+      const key = JSON.stringify([seat.row, seat.col]);
+      if (!first.has(key)) {
+        first.set(key, { seat, i });
+        return;
+      }
+      const prior = first.get(key);
       out.push({
-        rule: 'element-row-span-overrun',
-        spec: '4.6',
-        path: ptr('sections', s, 'elements', i, 'height'),
+        rule: 'seat-row-col-duplicate',
+        spec: '4.3.5',
+        path: ptr('sections', s, 'seats', i, 'col'),
         message:
-          `element ${quote(el.id)} starts at row ${quote(el.row)} (position ${start + 1} of ${order.length}) and spans ` +
-          `${height} rows, running ${start + height - order.length} row(s) past the last row in section ${quote(section.id)}`
+          `seat ${quote(seat.id)} is at row ${quote(seat.row)}, col ${seat.col}, which seat ${quote(prior.seat.id)} ` +
+          `(${ptr('sections', s, 'seats', prior.i)}) already holds in section ${quote(section.id)}`
       });
     });
   });
 }
 
-// (7a) Exactly one currency applies to the whole map (section 4.9).
+// (7) A row shape's `cols` is [first, last], so first MUST NOT exceed last
+//     (section 4.2.3); the guide-point formulas divide by last - first.
+function checkRowShapes(map, out) {
+  arr(map.sections).forEach((section, s) => {
+    arr(section?.rows).forEach((row, r) => {
+      const kind = ['line', 'arc', 'circle'].find((k) => has(row?.shape, k));
+      if (!kind) return;
+      const [a, b] = arr(row.shape[kind]?.cols);
+      if (!isNum(a) || !isNum(b) || a <= b) return;
+      out.push({
+        rule: 'row-shape-cols-reversed',
+        spec: '4.2.3',
+        path: ptr('sections', s, 'rows', r, 'shape', kind, 'cols'),
+        message: `row ${quote(row.id)} has a ${kind} shape spanning cols [${a}, ${b}]; the first column MUST NOT exceed the last`
+      });
+    });
+  });
+}
+
+// (8a) Exactly one currency applies to the whole map (section 4.9).
 function checkSingleCurrency(map, out) {
   const monies = [];
   arr(map.priceTiers).forEach((tier, j) => {
@@ -415,7 +404,7 @@ function checkSingleCurrency(map, out) {
   }
 }
 
-// (7b) Identifier uniqueness (sections 4.3 and 4.6). Each kind of id is its
+// (8b) Identifier uniqueness (sections 4.3 and 4.6). Each kind of id is its
 //      own namespace, unique within the scope the spec gives it: the whole map
 //      for seats, sections, elements, seat types and price tiers; its own
 //      section for rows. `groups` is one scope's worth of collections, each
@@ -481,10 +470,10 @@ function checkIdUniqueness(map, out) {
 }
 
 /**
- * Every whole-document rule of section 4 that JSON Schema cannot express.
- * Assumes nothing about the document beyond it being parsed JSON: a malformed
- * map yields the errors it can and skips the rest, leaving the shape of the
- * document to the schema.
+ * Every whole-document rule of section 4 that JSON Schema cannot express and a
+ * conformant validator MUST enforce. Assumes nothing about the document beyond
+ * it being parsed JSON: a malformed map yields the errors it can and skips the
+ * rest, leaving the shape of the document to the schema.
  *
  * @param {unknown} map a KerusiMap document
  * @returns {KerusiError[]} in document order, empty when the map is conformant
@@ -497,15 +486,118 @@ export function checkMap(map) {
   checkPriceTierRefs(map, errors);
   checkRowRefs(map, errors);
   checkCompanions(map, errors);
-  checkLayout(map, errors);
-  checkElementRowSpans(map, errors);
+  checkCanvasBounds(map, errors);
+  checkRowColUniqueness(map, errors);
+  checkRowShapes(map, errors);
   checkSingleCurrency(map, errors);
   checkIdUniqueness(map, errors);
   return errors;
 }
 
+// --- warnings --------------------------------------------------------------
+
 /**
- * (7c) KerusiStateDelta.updatedAt is "strictly increasing per session/map, so a
+ * A seat's footprint (section 4.5): a square of side `size` centred on its
+ * x/y, turned by its rotation.
+ */
+const footprint = (seat, size) => ({ x: seat.x, y: seat.y, size, theta: rad(isNum(seat.rotation) ? seat.rotation : 0) });
+
+/**
+ * Whether two footprints overlap, by the separating axis theorem over the edge
+ * normals of both squares. Footprints that only touch — neighbouring seats
+ * placed exactly one seat size apart — do not overlap.
+ */
+function footprintsOverlap(p, q) {
+  const dx = q.x - p.x;
+  const dy = q.y - p.y;
+  const tolerance = 1e-9 * Math.max(p.size, q.size);
+  for (const axis of [p.theta, p.theta + Math.PI / 2, q.theta, q.theta + Math.PI / 2]) {
+    const reach = (f) => (f.size / 2) * (Math.abs(Math.cos(f.theta - axis)) + Math.abs(Math.sin(f.theta - axis)));
+    const gap = Math.abs(dx * Math.cos(axis) + dy * Math.sin(axis));
+    if (gap >= reach(p) + reach(q) - tolerance) return false;
+  }
+  return true;
+}
+
+// (W1) A validator SHOULD report seats whose footprints overlap (section
+//      4.3.1). Every section shares the one canvas, so seats in different
+//      sections can overlap too. Each pair is reported once, at the later seat.
+function lintSeatOverlap(map, out) {
+  const placed = [];
+  arr(map.sections).forEach((section, s) => {
+    const size = seatSizeOf(map, section);
+    if (!isNum(size) || size <= 0) return;
+    arr(section?.seats).forEach((seat, i) => {
+      if (!isNum(seat?.x) || !isNum(seat?.y)) return;
+      placed.push({ seat, at: ['sections', s, 'seats', i], f: footprint(seat, size), order: placed.length });
+    });
+  });
+  // Sweep along x: two footprints can only overlap if their centres are closer
+  // than the sum of their circumradii.
+  placed.sort((a, b) => a.f.x - b.f.x);
+  const reported = [];
+  for (let j = 0; j < placed.length; j++) {
+    const q = placed[j];
+    for (let k = j - 1; k >= 0; k--) {
+      const p = placed[k];
+      const reach = (p.f.size + q.f.size) * Math.SQRT1_2;
+      if (q.f.x - p.f.x > reach) break;
+      if (Math.abs(q.f.y - p.f.y) > reach || !footprintsOverlap(p.f, q.f)) continue;
+      const [first, second] = p.order < q.order ? [p, q] : [q, p];
+      reported.push({
+        order: second.order,
+        error: {
+          rule: 'seat-overlap',
+          spec: '4.3.1',
+          path: ptr(...second.at),
+          message: `seat ${quote(second.seat.id)} overlaps seat ${quote(first.seat.id)} (${ptr(...first.at)})`
+        }
+      });
+    }
+  }
+  reported.sort((a, b) => a.order - b.order).forEach(({ error }) => out.push(error));
+}
+
+// (W2) A section's seats SHOULD lie inside its bounds (section 4.1). Only the
+//      seat's centre is checked, as it is against the canvas.
+function lintSectionBounds(map, out) {
+  arr(map.sections).forEach((section, s) => {
+    const b = section?.bounds;
+    if (!isObject(b) || ![b.x, b.y, b.width, b.height].every(isNum)) return;
+    arr(section.seats).forEach((seat, i) => {
+      if (!isNum(seat?.x) || !isNum(seat?.y)) return;
+      if (seat.x >= b.x && seat.x <= b.x + b.width && seat.y >= b.y && seat.y <= b.y + b.height) return;
+      out.push({
+        rule: 'seat-outside-section-bounds',
+        spec: '4.1',
+        path: ptr('sections', s, 'seats', i),
+        message:
+          `seat ${quote(seat.id)} at (${seat.x}, ${seat.y}) lies outside the bounds of section ${quote(section.id)} ` +
+          `(${b.x}, ${b.y}, ${b.width} × ${b.height})`
+      });
+    });
+  });
+}
+
+/**
+ * The section 4 conditions a validator SHOULD report but MUST NOT reject a
+ * document for: overlapping seat footprints, and seats outside their section's
+ * bounds. Same shape as `checkMap`'s errors.
+ *
+ * @param {unknown} map a KerusiMap document
+ * @returns {KerusiError[]}
+ */
+export function lintMap(map) {
+  /** @type {KerusiError[]} */
+  const warnings = [];
+  if (!isObject(map)) return warnings;
+  lintSeatOverlap(map, warnings);
+  lintSectionBounds(map, warnings);
+  return warnings;
+}
+
+/**
+ * (8c) KerusiStateDelta.updatedAt is "strictly increasing per session/map, so a
  * consumer can detect and discard an out-of-order delta" (section 5.2). That is
  * a property of a stream rather than of any one document, so it is checked over
  * the sequence a consumer received, in receipt order, scoped by sessionId/mapId.

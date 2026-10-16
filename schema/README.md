@@ -65,8 +65,9 @@ applies the semantic rules the schema cannot reach:
 import { createValidator } from './schema/validator.mjs';
 
 const kerusi = createValidator();
-const { valid, errors } = kerusi.validate(doc, 'map');
+const { valid, errors, warnings } = kerusi.validate(doc, 'map');
 for (const e of errors) console.error(`${e.path || '/'} [${e.rule}, §${e.spec}] ${e.message}`);
+for (const w of warnings) console.warn(`${w.path || '/'} [${w.rule}, §${w.spec}] ${w.message}`);
 ```
 
 Every error carries a `rule` code, the spec section it comes from, a
@@ -79,6 +80,11 @@ everything it can see:
 /priceTiers/1/price/currency [map-currency-mixed, §4.9] currency "USD" differs from "MYR", first used at /priceTiers/0/price/currency; exactly one currency applies to the whole map
 ```
 
+`warnings` holds what §4 says a validator SHOULD report but MUST NOT reject a
+document for — seats whose footprints overlap (§4.3.1), and seats outside their
+section's `bounds` (§4.1). They have the same shape as errors and never affect
+`valid`. State, session and delta documents have none.
+
 `updatedAt` monotonicity (§5.2) is a property of a stream rather than of one
 document, so it has its own entry point, which validates each delta and then
 the sequence:
@@ -88,10 +94,11 @@ const { valid, errors } = kerusi.validateDeltaStream(deltasInReceiptOrder);
 ```
 
 [`semantic-rules.mjs`](semantic-rules.mjs) exports the same rules with no
-dependency on ajv — `checkMap`, `checkDeltaStream`, and the `sectionOrder`
-(§4.1.1), `rowOrder` (§4.2.1), `inferLayout` and `effectiveLayout` helpers a
-renderer needs anyway — for a
-consumer that validates against the schemas by other means.
+dependency on ajv — `checkMap`, `lintMap` (the warnings), `checkDeltaStream`,
+and the helpers a renderer or editor needs anyway: `sectionOrder` (§4.1.1),
+`rowOrder` (§4.2.1), `seatSizeOf` (§4.5), `areNeighbours` (§4.3.5), and
+`guidePoint` and `isOnGuide` (§4.2.3) — for a consumer that validates against
+the schemas by other means.
 
 ### Running under ajv
 
@@ -100,9 +107,10 @@ Three settings matter:
 - **`version`.** Ajv's strict mode rejects unknown keywords, so register
   `version` as above (or compile with `strict: false`). It carries no
   validation behaviour.
-- **`strictRequired`.** The layout branches express "MUST NOT carry `x`/`y`" as
-  `not: { required: [...] }`. Ajv's `strictRequired` would demand those
-  properties be re-declared inside each negated subschema, so turn it off. It
+- **`strictRequired`.** The state and delta schemas express "exactly one of
+  `sessionId`/`mapId`" with `not: { required: [...] }`. Ajv's `strictRequired`
+  would demand those properties be re-declared inside each negated subschema,
+  so turn it off. It
   is off under ajv's defaults and only becomes an issue when `strict: true` is
   set.
 - **`format`.** `date-time` on `updatedAt`, `holdExpires`, `startsAt`, and
@@ -116,29 +124,22 @@ Three settings matter:
 - `kerusi: "1.0"` on all four document types (§7).
 - `additionalProperties: false` everywhere (§8) — see
   [Deliberate deviations](#deliberate-deviations).
-- Seat positioning (§4.3.1): a seat MUST carry `col`, or `x` and `y`, or both.
-- Element positioning (§4.4.1): an element MUST be positioned by `row` and/or
-  `col`, or by `x` and `y`.
-- **Declared** `Section.layout` consistency (§4.5), for seats *and* elements:
-  - `grid` — every seat has `col` and no `x`/`y`; every element is addressed by
-    `row` and/or `col`, carries no `x`/`y`, and has positive-integer
-    `width`/`height` spans.
-  - `freeform` — every seat has `x` and `y` and no `col`; every element has
-    `x`/`y` and no `col` (it MAY still carry `row` as a label).
-  - `mixed` — every seat has `col` **and** `x` and `y`. An element MAY use
-    either addressing scheme, or both; grid addressing keeps its "`row` and/or
-    `col`" form, so a row-only full-width screen (§6.7) is as valid here as in
-    a grid section. An element carrying neither `x` nor `y` is grid-addressed,
-    so its `width`/`height` are cell counts and must be positive integers, the
-    same as in a grid section.
+- The canvas (§4.5): `canvas` with a positive `width` and `height`, and a
+  positive `seatSize` on the map and on any section that overrides it.
+- Positions (§4.3.1, §4.4.1): every seat and every element carries `x` and `y`,
+  each at least 0. The upper bound — the canvas's `width` and `height` —
+  belongs to the document, so the validator checks it.
+- Adjacency (§4.3.5): `col` is a positive integer, and a seat with `col` also
+  has `row`.
+- Elements (§4.4.1): positive `width`/`height`, and no `row` or `col`.
+- Row shapes (§4.2.3): exactly one of `line`, `arc`, `circle`, each with all its
+  members, points as `[x, y]` pairs, a positive `radius`, and `cols` as two
+  positive integers.
+- `Section.bounds` (§4.1) with a positive `width` and `height`.
 - `Money.amount` as an integer in minor units, and `Money.currency` as a
   three-letter uppercase ISO 4217 code (§4.8).
-- `Section.aspectRatio` as `width:height` with both dimensions non-zero — §4.5
-  gives it the job of fixing the canvas proportions that percentage
-  coordinates, rotation, and element sizing are measured against, and a zero
-  dimension leaves all three undefined.
 - Enumerated values: `SeatStatus.status`, `Accessibility.transferArmrest`,
-  `Section.layout`, `Direction.axis`.
+  `Direction.axis`.
 - Timestamps as RFC 3339 `date-time` (§5.1.1) on `updatedAt`, `holdExpires`,
   `startsAt`, and `endsAt` — seconds present, explicit offset or `Z`. Note that
   per RFC 3339 §5.6 some validators still accept a space in place of `T`.
@@ -182,10 +183,11 @@ applies.
 |---|---|---|---|
 | `Seat.type` resolves against `legend[].id` | §4.6 | `seat-type-unresolved` | [`dangling-seat-type`](../examples/validator-only/dangling-seat-type.map.kerusi.json) |
 | `Seat.priceTier` and `SeatType.defaultPriceTier` resolve against `priceTiers[].id` | §4.6, §4.9 | `seat-price-tier-unresolved`, `seat-type-default-price-tier-unresolved` | [`dangling-price-tier`](../examples/validator-only/dangling-price-tier.map.kerusi.json) |
-| `Seat.row` / `Element.row` resolve against `Section.rows[].id`, when `rows` is present | §4.6 | `seat-row-unresolved`, `element-row-unresolved` | [`dangling-row`](../examples/validator-only/dangling-row.map.kerusi.json) |
+| `Seat.row` resolves against `Section.rows[].id`, when `rows` is present | §4.6 | `seat-row-unresolved` | [`dangling-row`](../examples/validator-only/dangling-row.map.kerusi.json) |
 | `Seat.companions[]` resolve to other seats **in the same section**, and are fully symmetric | §4.6 | `companion-unresolved`, `companion-self-reference`, `companion-asymmetric`, `companion-group-incomplete` | [`asymmetric-companions`](../examples/validator-only/asymmetric-companions.map.kerusi.json) |
-| **Layout inference** for a section with no declared `layout`, and the per-mode rules that follow it | §4.5, §4.4.1 | `layout-inference-inconsistent`, `seat-layout-mismatch`, `element-layout-mismatch`, `element-span-invalid` | [`inferred-layout-inconsistent`](../examples/validator-only/inferred-layout-inconsistent.map.kerusi.json) |
-| Element row span within the section's row order | §4.4.1, §4.6 | `element-row-span-overrun` | [`element-rowspan-overruns`](../examples/validator-only/element-rowspan-overruns.map.kerusi.json) |
+| Every seat and element lies on the canvas: `x` ≤ `canvas.width`, `y` ≤ `canvas.height` | §4.3.1, §4.4.1 | `seat-outside-canvas`, `element-outside-canvas` | [`seat-outside-canvas`](../examples/validator-only/seat-outside-canvas.map.kerusi.json), [`element-outside-canvas`](../examples/validator-only/element-outside-canvas.map.kerusi.json) |
+| No two seats in a section share a `row` and `col` | §4.3.5 | `seat-row-col-duplicate` | [`duplicate-row-col`](../examples/validator-only/duplicate-row-col.map.kerusi.json) |
+| A row shape's `cols` runs from first to last, not backwards | §4.2.3 | `row-shape-cols-reversed` | [`row-shape-cols-reversed`](../examples/validator-only/row-shape-cols-reversed.map.kerusi.json) |
 | One currency across the whole map | §4.9 | `map-currency-mixed` | [`mixed-currencies`](../examples/validator-only/mixed-currencies.map.kerusi.json) |
 | `Seat.id` uniqueness across the whole map | §4.3 | `seat-id-duplicate` | [`duplicate-seat-ids`](../examples/validator-only/duplicate-seat-ids.map.kerusi.json) |
 | `Section.id` and `Element.id` uniqueness across the whole map | §4.6 | `section-id-duplicate`, `element-id-duplicate` | [`duplicate-section-ids`](../examples/validator-only/duplicate-section-ids.map.kerusi.json), [`duplicate-element-ids`](../examples/validator-only/duplicate-element-ids.map.kerusi.json) |
@@ -193,20 +195,22 @@ applies.
 | `SeatType.id` and `PriceTier.id` uniqueness within the map | §4.6 | `seat-type-id-duplicate`, `price-tier-id-duplicate` | [`duplicate-seat-type-ids`](../examples/validator-only/duplicate-seat-type-ids.map.kerusi.json), [`duplicate-price-tier-ids`](../examples/validator-only/duplicate-price-tier-ids.map.kerusi.json) |
 | `updatedAt` strictly increasing across a delta stream | §5.2 | `delta-updated-at-not-increasing`, via `validateDeltaStream` | stream cases in [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
 
+The validator also reports two **warnings**, which §4 says a validator SHOULD
+report and MUST NOT reject a document for. They are returned in `warnings`,
+never in `errors`, and never affect `valid`:
+
+| Condition | Spec | Reported as | Covered by |
+|---|---|---|---|
+| Two seats' footprints overlap — a square of the applicable `seatSize`, turned by `rotation`. Seats that only touch do not; seats in different sections can, since they share one canvas | §4.3.1 | `seat-overlap`, once per pair, at the later seat | [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
+| A seat lies outside its section's `bounds` | §4.1 | `seat-outside-section-bounds` | [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
+
 Two notes on scope:
 
-- **Layout inference** is where the schemas and the validator differ most. A
-  section that declares `layout` is fully checked by the schema; a section that
-  omits it is not checked by the schema at all — not its seats, and not its
-  elements' cell spans — even though §4.5 makes the same consistency rule
-  binding. The validator applies the per-mode rules of §4.5 and §4.4.1 to every
-  section, using the declared mode where there is one and the inferred mode
-  otherwise, so an inferred `grid` section's elements are held to the same
-  standard as a declared one's. Producers are still encouraged to declare
-  `layout` explicitly. One case is left unchecked deliberately: a section with
-  no seats *and* no declared `layout` has nothing to infer from and the spec
-  defines no fallback, so its elements go unchecked rather than be judged
-  against a guessed mode.
+- **Row shapes are not validated against seats.** A seat may lie anywhere
+  relative to its row's guide — moving one off its line is the point (§4.2.3) —
+  and a seat's `col` may fall outside its row shape's `cols`, in which case it
+  simply has no guide point. `guidePoint` and `isOnGuide` are exported for
+  editors, not used to judge a document.
 - **Cross-document** checking remains out of scope. Whether a `KerusiState`'s
   seat keys match `Seat.id` in the referenced map (§3) needs both documents and
   a way to resolve `sessionId` to a `mapId`; the validator takes one document
@@ -221,23 +225,27 @@ extension §8 registers, with the document type as a suffix ahead of it
 the filename. That type suffix is a convention of this corpus, not part of the
 registered extension.
 
-- `examples/` — documents that MUST validate: every map in §6 of the spec, plus
-  a `mixed`-layout section exercising `directions`, locale-map labels, empty
-  rows and unpriced seats; a `mixed` section whose screen is addressed by `row`
-  alone; and a map with a stage-only section carrying no seats.
+- `examples/` — documents that MUST validate, and that draw no warning: every
+  map in §6 of the spec; a cinema whose screen headroom and cross-aisle are
+  just space on the canvas; a stadium stand exercising `directions`,
+  locale-map labels, a row with no seats, a labelled gap and unpriced seats;
+  and a map with a stage-only section carrying no seats.
 - `examples/invalid/` — documents that MUST NOT validate: missing required
-  members, a wrong `kerusi` version, a bare top-level vendor field,
-  layout-inconsistent seats and elements, a fractional cell span in both a
-  `grid` and a `mixed` section, a degenerate `aspectRatio`, a lowercase
-  currency, a fractional `Money.amount`, an ISO 8601 timestamp that is not RFC 3339, and
-  state/delta documents with both or neither of `sessionId`/`mapId`.
+  members (`canvas`, `seatSize`, `legend`, a seat's or an element's `x`/`y`), a
+  wrong `kerusi` version, a bare top-level vendor field, a zero-width canvas, a
+  zero `seatSize`, a negative coordinate, a `col` of 0 and a `col` without a
+  `row`, an element addressed by `row`/`col`, a zero-width element, row shapes
+  with two kinds, an unknown kind or a missing member, the removed `layout` and
+  `aspectRatio` members, a lowercase currency, a fractional `Money.amount`, an
+  ISO 8601 timestamp that is not RFC 3339, and state/delta documents with both
+  or neither of `sessionId`/`mapId`.
 - `examples/validator-only/` — documents that **pass** these schemas but that a
   conformant validator MUST reject: dangling `type`/`priceTier`/`row`
-  references, asymmetric `companions`, a section whose omitted `layout` cannot
-  be consistently inferred, an element row span that overruns the section,
+  references, asymmetric `companions`, a seat and an element off the canvas,
+  two seats sharing a row and column, a row shape whose `cols` run backwards,
   mixed currencies, and a duplicate id of each kind — seat, section, element
   (across two sections), row, seat type and price tier. At least one per row of
-  the table above, and the fixture set the validator is tested against.
+  the first table above, and the fixture set the validator is tested against.
 
 Run the corpus through both stages of the validator:
 
@@ -246,11 +254,12 @@ npm install && npm test
 ```
 
 [`test/validate-examples.mjs`](test/validate-examples.mjs) is the single entry
-point. It asserts that `examples/` passes both stages, that every document in
-`examples/invalid/` is caught by the *schema* stage (a document only the
+point. It asserts that `examples/` passes both stages with no warnings, that
+every document in `examples/invalid/` is caught by the *schema* stage (a document only the
 semantic rules reject belongs in `validator-only/` instead), and that each
 `validator-only/` document passes the schema and then produces exactly the rule
 code and JSON Pointer expected of it — not merely that it failed somehow. It
 finishes with [`test/semantic-cases.mjs`](test/semantic-cases.mjs), which covers
 what a corpus of single files cannot: the accepting side of each rule, the
-section and row ordering of §4.1.1 and §4.2.1, and delta-stream monotonicity.
+warnings, the guide points and neighbours of §4.2.3 and §4.3.5, the section and
+row ordering of §4.1.1 and §4.2.1, and delta-stream monotonicity.

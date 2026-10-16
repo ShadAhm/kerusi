@@ -1,6 +1,11 @@
 {
   "kerusi": "1.0",
   "id": "duplicate-price-tier-ids",
+  "canvas": {
+    "width": 100,
+    "height": 100
+  },
+  "seatSize": 10,
   "legend": [
     {
       "id": "standard"
@@ -28,7 +33,8 @@
       "seats": [
         {
           "id": "A1",
-          "col": 1,
+          "x": 10,
+          "y": 20,
           "type": "standard",
           "priceTier": "regular"
         }

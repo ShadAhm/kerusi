@@ -12,7 +12,7 @@ This repository holds the specification itself, plus the tooling that makes it m
 
 🧪 [schema/](schema/) — draft 2020-12 JSON Schemas for `KerusiMap`, `KerusiSession`,
 `KerusiState`, and `KerusiStateDelta`, the [validator](schema/validator.mjs) that runs them
-and then enforces the referential-integrity, layout-inference and whole-document rules of
+and then enforces the referential-integrity, canvas and whole-document rules of
 §4–§5 that JSON Schema cannot state, and [TypeScript interfaces](schema/kerusi-1.0.d.ts)
 for every type in §4–§5. The [README](schema/README.md) covers what each stage enforces
 and where the schemas deliberately deviate from the spec text.
@@ -28,7 +28,7 @@ npm install && npm test
 Key ideas covered in the spec:
 
 - **Static/dynamic split** — a cacheable `KerusiMap` (layout) is separate from a frequently-updated `KerusiState` (availability), rather than one mutable structure.
-- **Freeform and grid positioning** — seats can be addressed by `row`/`col` or by `x`/`y` coordinates, so curved rows, stadium bowls, and irregular cabin layouts are representable alongside plain grids.
+- **One canvas** — every seat has an `x`/`y` on a single canvas per map and a declared seat size, so every renderer draws the same map identically. `row`/`col` say only which seats are neighbours, and an optional line, arc or circle on a row records its intended shape for editors, so plain grids, curved rows, round tables, and stadium bowls are all the same kind of map.
 - **Sections, pricing, seat types, and companion seats** — the structure needed once a layout goes beyond a single room.
 - **`KerusiStateDelta`** for incremental, real-time updates over a push transport (WebSocket, SSE), distinct from a full `KerusiState` snapshot.
 - **Migration notes** from a prior seat-picker implementation, `angularJs.keruC`.
