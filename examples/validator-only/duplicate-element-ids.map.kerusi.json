@@ -1,6 +1,11 @@
 {
   "kerusi": "1.0",
   "id": "duplicate-element-ids",
+  "canvas": {
+    "width": 100,
+    "height": 100
+  },
+  "seatSize": 10,
   "legend": [
     {
       "id": "standard"
@@ -9,35 +14,39 @@
   "sections": [
     {
       "id": "s1",
-      "seats": [
-        {
-          "id": "A1",
-          "col": 1,
-          "type": "standard"
-        }
-      ],
       "elements": [
         {
           "id": "exit",
           "kind": "exit",
-          "col": 2
+          "x": 25,
+          "y": 30
+        }
+      ],
+      "seats": [
+        {
+          "id": "A1",
+          "x": 10,
+          "y": 20,
+          "type": "standard"
         }
       ]
     },
     {
       "id": "s2",
-      "seats": [
-        {
-          "id": "B1",
-          "col": 1,
-          "type": "standard"
-        }
-      ],
       "elements": [
         {
           "id": "exit",
           "kind": "exit",
-          "col": 2
+          "x": 25,
+          "y": 50
+        }
+      ],
+      "seats": [
+        {
+          "id": "B1",
+          "x": 10,
+          "y": 40,
+          "type": "standard"
         }
       ]
     }

@@ -3,7 +3,7 @@
 //
 //   import { createValidator } from './schema/validator.mjs';
 //   const kerusi = await createValidator();
-//   const { valid, errors } = kerusi.validate(doc, 'map');
+//   const { valid, errors, warnings } = kerusi.validate(doc, 'map');
 //
 // ajv is the only dependency, and only this file needs it: ./semantic-rules.mjs
 // carries every whole-document rule and imports nothing, so a consumer that
@@ -15,6 +15,10 @@
 // node. Where a document fails the schema badly enough that a semantic rule
 // cannot be evaluated (a section that is not an object, a seat with no id), the
 // rule quietly declines rather than guessing.
+//
+// Warnings are the conditions section 4 says a validator SHOULD report without
+// rejecting the document — overlapping seats, a seat outside its section's
+// bounds. They never affect `valid`.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,9 +26,19 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 
-import { checkDeltaStream, checkMap } from './semantic-rules.mjs';
+import { checkDeltaStream, checkMap, lintMap } from './semantic-rules.mjs';
 
-export { checkDeltaStream, checkMap, effectiveLayout, inferLayout, rowOrder, sectionOrder } from './semantic-rules.mjs';
+export {
+  areNeighbours,
+  checkDeltaStream,
+  checkMap,
+  guidePoint,
+  isOnGuide,
+  lintMap,
+  rowOrder,
+  sectionOrder,
+  seatSizeOf
+} from './semantic-rules.mjs';
 
 const schemaDir = dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +53,8 @@ export const SCHEMA_FILES = {
 /**
  * An ajv instance configured as schema/README.md describes: `version` is Kerusi
  * metadata rather than a JSON Schema keyword, `strictRequired` conflicts with
- * the `not: { required: [...] }` layout branches, and `date-time` is only
+ * the `not: { required: [...] }` sessionId/mapId branches of the state and
+ * delta schemas, and `date-time` is only
  * enforced with ajv-formats registered.
  */
 function createAjv() {
@@ -55,7 +70,11 @@ function createAjv() {
  * @param {{ schemas?: Record<string, object> }} [options] pre-loaded schemas,
  *   keyed by document type, for a caller that does not read from disk
  * @returns {{
- *   validate: (doc: unknown, type: string) => { valid: boolean, errors: import('./semantic-rules.mjs').KerusiError[] },
+ *   validate: (doc: unknown, type: string) => {
+ *     valid: boolean,
+ *     errors: import('./semantic-rules.mjs').KerusiError[],
+ *     warnings: import('./semantic-rules.mjs').KerusiError[]
+ *   },
  *   validateDeltaStream: (deltas: unknown[]) => { valid: boolean, errors: object[] }
  * }}
  */
@@ -85,7 +104,8 @@ export function createValidator(options = {}) {
     // The semantic rules run whatever the schema said: a dangling seat type is
     // worth reporting alongside a missing required member, not after a re-run.
     if (type === 'map') errors.push(...checkMap(doc));
-    return { valid: errors.length === 0, errors };
+    const warnings = type === 'map' ? lintMap(doc) : [];
+    return { valid: errors.length === 0, errors, warnings };
   };
 
   /**

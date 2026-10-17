@@ -5,6 +5,7 @@
 | | |
 |---|---|
 | Version | 1.0.0-draft |
+| Revision | 15 (§11) |
 | Status | Draft — open for comment |
 | Date | 2026-08-21 |
 | Editor | Shad |
@@ -87,9 +88,10 @@ the sections that follow:
 3. It **adds sections, pricing, seat types, companion seats, and
    non-seat elements** required once a layout exceeds a single room
    (§4).
-4. It **supports freeform (x/y) positioning** alongside row/column
-   addressing, for curved rows, stadium bowls, and cabin layouts that do
-   not fit a strict grid (§4.3).
+4. It **places every seat on one canvas** and records which seats are
+   neighbours separately, so curved rows, round tables, stadium bowls,
+   and cabin layouts are drawn the same by every renderer without giving
+   up row-and-seat adjacency (§4.3, §4.5).
 
 This makes the format equally usable by a canvas or SVG renderer, a
 booking backend, and a static build-time cache, without any of them
@@ -110,11 +112,13 @@ specific rule governs.
   describes booking status and MUST be fetched or synchronized
   separately and more frequently.
 - **Renderer-agnostic.** This specification defines no rendering
-  technology. It defines coordinates for freeform layouts; it does not
-  define how those coordinates are drawn.
-- **Progressive enhancement.** A minimal `KerusiMap` (rows of seats and
-  nothing else) MUST be valid. Pricing, sections, companion seats, and
-  freeform coordinates are optional layers.
+  technology. It defines one canvas per map, where every seat sits on it
+  and how large a seat is (§4.5); it does not define how that canvas is
+  drawn — in pixels, colours, or symbols.
+- **Progressive enhancement.** A minimal `KerusiMap` (seats with
+  positions on a canvas, and nothing else) MUST be valid. Rows and
+  adjacency, row shapes, pricing, multiple sections, and companion seats
+  are optional layers.
 - **Forward-compatible extensibility.** Every object type defined by
   this specification accepts an optional `metadata` member for
   implementation-specific data. A conformant consumer MUST ignore any
@@ -126,13 +130,13 @@ specific rule governs.
   as JSON:API and OpenAPI. Human-facing label values MAY be localized
   (§4.2).
 - **Reading direction is a rendering concern.** `Seat.col` is an abstract
-  adjacency ordinal — "this seat is next to that one" — not a guarantee of
-  left-to-right screen position, the same way `x`/`y` coordinates carry no
-  assumption about which edge of the canvas is "first." A consumer
-  rendering for a right-to-left locale reverses the visual order in which
-  it lays out ascending `col` values (or mirrors `x`), while adjacency and
-  navigation order are unaffected, because nothing in this specification
-  ties `col` to a screen direction. `KerusiMap.locale` (§4) is the existing
+  adjacency ordinal — "this seat is next to that one" (§4.3.5) — not a
+  guarantee of left-to-right screen position, the same way the canvas's
+  `x` axis carries no assumption about which end of a venue is its
+  "start." A consumer rendering for a right-to-left locale mirrors the
+  canvas, or reverses ascending `col` values in a view built from rows
+  (§4.5.1), while adjacency and navigation order are unaffected, because
+  nothing in this specification ties `col` to a screen direction. `KerusiMap.locale` (§4) is the existing
   hint a consumer uses to choose a rendering direction; no separate
   RTL-specific field is needed, consistent with this format defining no
   rendering technology.
@@ -174,10 +178,17 @@ interface KerusiMap {
                                   //   | "stadium" | "bus" | "train" | "custom".
                                   //   Non-normative; informational only.
   locale?: string;              // BCP-47 language tag. Default: "en".
+  canvas: Canvas;               // REQUIRED. The one drawing surface (§4.5).
+  seatSize: number;             // REQUIRED. A seat's footprint, in canvas units (§4.5).
   legend: SeatType[];           // REQUIRED. Vocabulary of seat types used in this map.
   priceTiers?: PriceTier[];     // Named price tiers, referenced by id.
   sections: Section[];          // REQUIRED.
   metadata?: Record<string, unknown>;
+}
+
+interface Canvas {
+  width: number;                // REQUIRED. Positive. Canvas units.
+  height: number;               // REQUIRED. Positive. Same scale as width.
 }
 ```
 
@@ -189,8 +200,9 @@ is an open question — see §10.)
 
 ### 4.1 Section
 
-A section holds a **flat list of seats**, not a grid of rows containing
-seats. This is what makes curves, offsets, and irregular gaps
+A section is a **named zone on the map's canvas** (§4.5), not a canvas
+of its own. It holds a **flat list of seats**, not a grid of rows
+containing seats. This is what makes curves, offsets, and irregular gaps
 representable: a seat's position is a property of the seat, not a slot
 in a shared array.
 
@@ -201,17 +213,34 @@ interface Section {
                                     //   { "en": "Orchestra", "ms": "Orkestra" }.
   index?: number;                 // Ordering key among sections (§4.1.1).
                                     //   An ordering key, not a position.
-  layout?: "grid" | "freeform" | "mixed";  // Strict positioning constraint — see §4.5.
-  aspectRatio?: string;           // "width:height", e.g. "16:9". Meaningful only for
-                                    //   freeform/mixed sections. Default: "1:1".
-  rows?: RowMeta[];               // Optional row registry (labels, order, empty rows).
+  seatSize?: number;              // Overrides KerusiMap.seatSize here (§4.5).
+  bounds?: Bounds;                // The section's extent on the canvas. Does not
+                                    //   affect drawing.
+  rows?: RowMeta[];               // Optional row registry (labels, order, shapes).
                                     //   NOT a container — see §4.2.
   directions?: Direction[];       // Optional human-facing axis labels — see §4.10.
   seats: Seat[];                  // REQUIRED. Flat list; order is not significant.
   elements?: Element[];           // Non-bookable features: screens, stages, aisles, stairs.
   metadata?: Record<string, unknown>;
 }
+
+interface Bounds {
+  x: number;                      // REQUIRED. Left edge, in canvas units.
+  y: number;                      // REQUIRED. Top edge, in canvas units.
+  width: number;                  // REQUIRED. Positive.
+  height: number;                 // REQUIRED. Positive.
+}
 ```
+
+Every section in a map is placed on the same canvas, so two sections can
+sit side by side — rows in front of a stage, and tables along one wall —
+and where a section is drawn is simply where its seats and elements are.
+
+`bounds` is OPTIONAL. It records the rectangle a section occupies, for a
+consumer that zooms to a section, draws a thumbnail, or outlines a
+section beside a legend. It does not affect drawing. A section's seats
+SHOULD lie inside its `bounds`, and a validator SHOULD report one that
+does not (§4.6). Two sections' bounds MAY overlap.
 
 #### 4.1.1 Section order
 
@@ -229,10 +258,9 @@ between them are adjacent in the order — two sections, not six — and
 renumbering every section in a map changes nothing.
 
 Section order is the order in which a consumer presents a map's
-sections: in a list, a legend, a section picker, or a stacked rendering.
-It carries no geometry. Consistent with §2, this specification does not
-say how far apart two sections are drawn, nor on which edge of the screen
-the first one appears.
+sections: in a list, a legend, or a section picker. It carries no
+geometry: where a section is drawn follows from the positions of its
+seats and elements on the canvas (§4.5), never from its `index`.
 
 If any section in a map declares `index`, every section in that map
 SHOULD declare one. A partially indexed set is still deterministic under
@@ -260,6 +288,8 @@ interface RowMeta {
   label?: string;
   index?: number;                 // Ordering key among rows in the section (§4.2.1).
                                     //   An ordering key, not a position.
+  shape?: RowShape;               // A guide to the row's intended form, for
+                                    //   editors (§4.2.3). Never moves a seat.
   metadata?: Record<string, unknown>;
 }
 ```
@@ -275,10 +305,11 @@ conformant consumers MUST derive the same order from the same document:
    another.
 
 `index` is an **ordering key, not a position**. Rows declared at `index`
-0 and `index` 11 with nothing between them are adjacent — two rows, not
-twelve — and renumbering every row in a section changes nothing about its
-layout. Vertical space is expressed by declaring a row (§4.2.2), never by
-leaving a numeric hole in `index`.
+0 and `index` 11 with nothing between them are consecutive — two rows,
+not twelve — and renumbering every row in a section changes nothing.
+Row order says which row comes first in a list, an announcement, or a
+view built from rows (§4.5.1). It never places a seat: that is `x`/`y`
+alone (§4.3.1).
 
 If any row in a section declares `index`, every row in that section
 SHOULD declare one. A partially indexed set is still deterministic under
@@ -287,25 +318,74 @@ the rule above, but is harder for a human to read.
 #### 4.2.2 Empty rows
 
 A `RowMeta` that no seat references is an **empty row**. It is valid, and
-it still occupies a slot in the section's row order: an empty row
-reserves the vertical space that one row of seats would occupy.
+a validator MUST NOT reject it: a producer may keep a label from a
+venue's own plan, such as a walkway, or a shaped row whose seats are yet
+to be placed. An empty row **reserves no space**. Space on the canvas is
+simply space: the throw between a cinema screen and row A is the distance
+between the screen element and row A's seats, and a cross-aisle is the
+distance between two rows' seats (§6.7). No row needs to exist to hold
+it open.
 
-This is the row-axis counterpart to a skipped column (§4.3.2). It is how
-a grid-addressed section expresses space **above its first row** — the
-throw between a cinema screen and row A — and space **between two rows** —
-a cross-aisle, a barrier, a step. An `Element` that needs to occupy that
-space is positioned in the empty row like any other row-addressed element
-(§4.4.1); §6.7 works the case end to end.
+#### 4.2.3 Row shapes
 
-An empty row reserves space in a `"grid"` section, and for row-addressed
-elements in a `"mixed"` one. In a `"freeform"` section every position
-comes from `x`/`y` (§4.5), so an empty row reserves nothing there; it
-remains valid as a declared label, and a validator MUST NOT reject it.
+```ts
+type RowShape =                   // Exactly one member.
+  | { line:   { from: Point; to: Point; cols: [number, number] } }
+  | { arc:    { center: Point; radius: number; start: number; sweep: number;
+                cols: [number, number] } }
+  | { circle: { center: Point; radius: number; start: number; cols: [number, number] } };
 
-Empty rows are whole rows. Reserving a fraction of a row's height is a
-rendering concern this specification does not address, consistent with
-§2: a document states how many rows of space are reserved, and a renderer
-decides what a row is worth in pixels.
+type Point = [number, number];    // [x, y], in canvas units (§4.5).
+```
+
+`RowMeta.shape` is OPTIONAL, and holds exactly one of:
+
+- **`line`** — a straight row from `from` to `to`.
+- **`arc`** — part of a circle round `center`, of positive `radius`,
+  starting at angle `start` and turning through `sweep` degrees.
+- **`circle`** — a whole circle round `center`, of positive `radius`, the
+  first seat at angle `start`: seats round a table.
+
+`cols` is `[first, last]`, the columns the shape spans: positive integers,
+with `first` not greater than `last`. Angles are in degrees on the canvas
+axes — 0° points right (+x), 90° points down (+y) — and a positive
+`sweep` turns clockwise on screen.
+
+A shape is a **guide**. It records the form a row was laid out in, so
+that any editor, not only the one that wrote it, can reopen the row as a
+line, an arc, or a table, and re-space it. It MUST NOT move any seat: a
+renderer ignores it, and a seat's `x`/`y` is always where that seat is
+drawn (§4.3.1).
+
+A seat belongs to a row **only** through `Seat.row`. A shape never
+decides membership: moving a seat away from its row's guide never changes
+its row, and moving it near another row's guide never adds it to that
+row.
+
+**Guide point.** For a seat with `col` = *k* in a row whose shape has
+`cols` = [*a*, *b*], where *a* ≤ *k* ≤ *b*:
+
+- `line`: `from + (to − from) × (k − a) / (b − a)`, or `from` itself when
+  *a* = *b*;
+- `arc`: the point on the circle at angle
+  `start + sweep × (k − a) / (b − a)`, or at `start` when *a* = *b*;
+- `circle`: the point on the circle at angle
+  `start + 360 × (k − a) / (b − a + 1)`;
+
+where the point on the circle at angle θ is
+`(center.x + radius × cos θ, center.y + radius × sin θ)`. A column outside
+[*a*, *b*] has no guide point. A skipped `col` leaves its guide point
+empty, so an aisle in a curved row keeps its width (§4.3.2).
+
+A seat is **on its guide** when it lies within `seatSize / 4` of its
+guide point, using the seat size that applies to its section (§4.5).
+Only editors use this. When an editor changes a guide — its radius, its
+sweep, its column count — it SHOULD move every seat on the guide to its
+new guide point, and SHOULD leave every seat off the guide where it is.
+One seat moved off a curve therefore no longer costs the curve.
+
+A row MAY have a shape and no seats on its guide. An editor then treats
+it as a plain row, and MAY drop the shape.
 
 ### 4.3 Seat
 
@@ -314,11 +394,13 @@ interface Seat {
   id: string;                     // REQUIRED. Globally unique within the KerusiMap.
   label?: string;                  // Display label, e.g. "12" or "12A". Defaults to id.
   row?: string;                    // References RowMeta.id, or a free-text row label.
-  col?: number;                    // Grid column within the row.
-  x?: number;                      // 0–100, percent of section width (see aspectRatio).
-  y?: number;                      // 0–100, percent of section height.
-  rotation?: number;               // Degrees. Allows one seat to tilt independently
-                                     //   of its neighbours, for curved or staggered rows.
+  col?: number;                    // Positive integer. Adjacency within the row
+                                     //   (§4.3.5); requires row. Never places the seat.
+  x: number;                       // REQUIRED. Centre, in canvas units (§4.3.1).
+  y: number;                       // REQUIRED. Centre, in canvas units.
+  rotation?: number;               // Degrees, clockwise on screen, about the seat's
+                                     //   centre. Lets one seat tilt independently of
+                                     //   its neighbours, for curved or staggered rows.
   type: string;                    // REQUIRED. References a SeatType.id in the map's legend.
   priceTier?: string;              // References a PriceTier.id.
   price?: Money;                   // Literal override; takes precedence over priceTier.
@@ -331,43 +413,40 @@ interface Seat {
 }
 ```
 
-#### 4.3.1 Positioning requirement
+#### 4.3.1 Position and footprint
 
-A `Seat` MUST specify `col`, or `x` and `y`, or both, as required by its
-enclosing `Section.layout` mode — see §4.5 for the normative rule. A
-`Seat` MUST NOT specify neither.
+`Seat.x` and `Seat.y` are REQUIRED. They are the centre of the seat's
+footprint, in canvas units (§4.5), and MUST lie within the canvas:
+`0 ≤ x ≤ canvas.width` and `0 ≤ y ≤ canvas.height`. A validator MUST
+reject a seat without them, or outside the canvas.
 
-Per-seat mixing of positioning methods (for example, a mostly-straight
-row with one seat displaced around a structural obstruction, giving only
-that seat `x`/`y` coordinates while its neighbours use `col`) is
-permitted only in a section whose `layout` is `"mixed"`, since that mode
-requires *every* seat in the section to carry both `col` and `x`/`y`
-(§4.5). A section that is not declared or inferred as `"mixed"` MUST use
-one positioning method uniformly across all of its seats.
+A seat's **footprint** is a square whose side is the seat size that
+applies to its section (§4.5), centred on `x`/`y` and turned by
+`rotation` degrees clockwise on screen about that centre. The footprint
+is the whole of a seat's geometry: two conformant renderers draw the same
+seat at the same place, at the same size, and at the same angle.
 
-When both `col` and `x`/`y` are present on the same seat, `x`/`y` is
-**authoritative for visual placement**. `col` remains meaningful in that
-case for logical adjacency — "the seat to the left of this one,"
-keyboard or screen-reader navigation order, and accessibility tooling —
-even when the seat has been visually displaced off-grid.
+Two seats whose footprints overlap are almost certainly a producer error,
+though not one that makes the document ambiguous. A validator SHOULD
+report such seats, and MUST NOT reject the document because of them.
+Footprints that merely touch — seats placed exactly one seat size apart —
+do not overlap.
+
+`x`/`y` is the only thing that places a seat. `row`, `col`, and a row's
+shape never do (§4.2.3, §4.3.5).
 
 #### 4.3.2 No filler objects
 
-Empty space is never represented by a placeholder seat or node. In a
-grid-addressed row, an aisle is simply a skipped column number
-(`col: 1, 2, 4, 5` is a one-seat gap after column 2). In a freeform row
-there is nothing to fill in the first place: seats that do not exist are
-simply absent from `seats`. A gap that requires a visible label (for
-example, "STAIRS," a marked wheelchair bay, or a deliberately wide
-aisle) MUST instead be represented as an `Element` (§4.4).
-
-The row axis carries the same vocabulary, with one asymmetry that follows
-from the data model rather than from a gap in it: columns are *numbered*,
-so an unoccupied column is expressed by omitting its number, whereas rows
-are *named* (`RowMeta.id`), so there is no skipped row number to leave
-out. An unoccupied row is therefore expressed by **declaring** it and
-giving it no seats (§4.2.2). Both axes then offer the same two options —
-space that is merely absent, and labelled space that is an `Element`.
+Empty space is never represented by a placeholder seat or node. Seats
+that do not exist are simply absent from `seats`, and the canvas is empty
+where they would have been. Within a row, an aisle is also a skipped
+column number (`col: 1, 2, 4, 5` is a one-seat gap after column 2), which
+is what tells a consumer that the seats either side of it are not
+neighbours (§4.3.5). Space between rows needs nothing at all: it is the
+distance between one row's seats and the next row's on the canvas
+(§4.2.2). A gap that requires a visible label (for example, "STAIRS," a
+marked wheelchair bay, or a deliberately wide aisle) MUST instead be
+represented as an `Element` (§4.4).
 
 #### 4.3.3 `type` versus `attributes`
 
@@ -407,13 +486,32 @@ tag remains valid for simple cases and MUST NOT be rejected, but
 `accessibility.wheelchairAccessible` is the structured, machine-checkable
 source of truth when both are present on the same seat.
 
+#### 4.3.5 Neighbours
+
+`Seat.row` and `Seat.col` are OPTIONAL, and say only which seats are next
+to which. `col` is a positive integer, and a seat with `col` MUST also
+have `row`. Within a section, no two seats may share the same `row` and
+`col`; a validator MUST reject a section in which they do.
+
+Two seats are **neighbours** exactly when they are in the same section
+and the same row, and their `col`s differ by 1. Nothing else implies
+adjacency: not distance on the canvas, not labels, not order in `seats`.
+A skipped `col` is an aisle, so `col: 2` and `col: 4` are not neighbours
+however close together they are drawn, and a seat with no `row` or no
+`col` has no neighbours.
+
+Adjacency is what a consumer uses to find "4 seats together," to move
+keyboard focus to the seat next door, and to tell a screen-reader user
+that seat L5 is next to L4. It is independent of drawing: `row` and `col`
+MUST NOT affect where a seat is drawn in the canonical view (§4.5), and a
+seat moved off its row's line keeps both its row and its neighbours.
+
 ### 4.4 Element
 
 Non-bookable features that still require rendering: screens, stages,
 exits, lavatories, staircases, or a gap that requires a label rather
-than mere absence. An `Element` is positioned the same way a seat is —
-`row`+`col` or `x`/`y` — so it may sit inside a row's flow or float
-independently on the section canvas.
+than mere absence. An `Element` is placed on the canvas exactly as a
+seat is, by its centre.
 
 ```ts
 interface Element {
@@ -421,112 +519,84 @@ interface Element {
   kind: string;                    // REQUIRED. "screen" | "stage" | "exit" | "lavatory"
                                      //   | "gap" | "aisle" | implementation-defined.
   label?: string;
-  row?: string;
-  col?: number;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  rotation?: number;
+  x: number;                       // REQUIRED. Centre, in canvas units (§4.4.1).
+  y: number;                       // REQUIRED. Centre, in canvas units.
+  width?: number;                  // Canvas units. Default: the applicable seatSize.
+  height?: number;                 // Canvas units. Default: the applicable seatSize.
+  rotation?: number;               // Degrees, clockwise on screen, about the centre.
   metadata?: Record<string, unknown>;
 }
 ```
 
-#### 4.4.1 Element positioning and sizing
+#### 4.4.1 Element position and size
 
-An `Element` is subject to the same strict positioning constraint as its
-section's seats (§4.5), for the same reason: a section whose elements may
-be addressed differently from its seats cannot be laid out
-deterministically by two independent renderers.
+`Element.x` and `Element.y` are REQUIRED. They are the centre of the
+element, in canvas units, and MUST lie within the canvas, as a seat's do
+(§4.3.1). `width` and `height` are in canvas units and MUST be positive.
+A missing `width` or `height` defaults to the seat size that applies to
+the element's section (§4.5). `rotation` turns the element clockwise on
+screen about its centre.
 
-- In a `"grid"` section, an `Element` MUST be positioned by `row` and/or
-  `col`, and MUST NOT carry `x` or `y`.
-- In a `"freeform"` section, an `Element` MUST be positioned by `x` and
-  `y`, and MUST NOT carry `col`. It MAY still carry `row` as a label.
-- In a `"mixed"` section, an `Element` MAY use either; where both are
-  present, `x`/`y` governs visual placement (§4.3.1).
+An element occupies a `width` × `height` rectangle. What is drawn inside
+it — a screen, a stage, the word "STAIRS" — is a rendering decision, as
+§2 leaves it. An element has no `row` and no `col`: it is never placed by
+reference to a row, and it has no neighbours.
 
-`width` and `height` are interpreted according to that same mode:
+### 4.5 The canvas
 
-- **Grid.** `width` is a **column span** and `height` is a **row span**,
-  both counted in cells from the element's `col` and `row`. Each MUST be
-  a positive integer, and each defaults to `1`. An element with
-  `height: 3` occupies its own row plus the two rows following it in the
-  section's row order (§4.2.1) — ordinarily empty rows declared for that
-  purpose (§4.2.2). If `col` is omitted, the element spans the section's
-  full column extent and `width` is ignored; this is the usual form for a
-  screen or a stage.
-- **Freeform.** `width` and `height` are percentages of the section's
-  width and height on the canvas whose proportions `Section.aspectRatio`
-  fixes (§4.5), matching the percentage interpretation of `x` and `y`.
+`KerusiMap.canvas` is REQUIRED: `{ "width": number, "height": number }`,
+both positive. Its units are abstract, with the **same scale on both
+axes** — one unit across is one unit down — so a rotation, a circle, or an
+element's size means the same thing in a wide hall as in a square one.
+The origin is the top-left corner, `x` grows to the right, and `y` grows
+downwards.
 
-Grid spans are **dimensionless cell counts**, exactly as `col` is. Giving
-them a normative meaning does not give grid mode geometry and does not
-qualify the renderer-agnostic principle of §2: a document says how many
-cells an element occupies, and a renderer decides what a cell measures.
+`KerusiMap.seatSize` is REQUIRED: a positive number of canvas units, the
+side of every seat's square footprint (§4.3.1). A section MAY override it
+with its own `seatSize`, which then applies to that section's seats and
+to the default size of its elements (§4.4.1) — business-class seats
+larger than economy ones, for instance. Within one section, every seat
+is the same size.
 
-### 4.5 Positioning modes
-
-`Section.layout` is a **strict, validated constraint**, not a rendering
-hint: every seat in a section MUST conform to that section's declared or
-inferred `layout` mode. This guarantees that two independent renderers
-consuming the same `KerusiMap` produce the same layout, rather than each
-guessing at how to interpret a section's seats from their positional
-fields alone.
-
-There are three modes:
-
-- **`"grid"`** — every seat MUST have `col`. No seat in the section may
-  have `x` or `y`. Because `Section.seats` is a flat, unordered list
-  (§4.1), `col` MUST be given explicitly on every seat — it is never
-  inferred from a seat's position within the array. A seat MAY still
-  carry `row`; in a grid section `row` is not merely a label, since it
-  places the seat on the row axis in the order defined by §4.2.1.
-- **`"freeform"`** — every seat MUST have both `x` and `y`. No seat in
-  the section may have `col`. A seat MAY still carry a free-text `row`
-  value purely as a label — for grouping or accessibility announcement,
-  e.g. "Row L, seat 1" — since `row` alone carries no positional
-  information and therefore does not participate in this constraint.
-- **`"mixed"`** — every seat MUST have `col` **and** both `x` and `y`.
-  This is the only mode in which a single seat may combine grid and
-  freeform addressing; per §4.3.1, `x`/`y` governs visual placement and
-  `col` remains available for logical adjacency.
-
-If `Section.layout` is omitted, a validator MUST infer it from the
-section's seats:
-
-- If every seat has `col` and no seat has `x` or `y`, the section is
-  inferred as `"grid"`.
-- If every seat has both `x` and `y`, and no seat has `col`, the section
-  is inferred as `"freeform"`.
-- Any other combination is inconsistent — for example, some seats
-  carrying only `col` while others carry only `x`/`y`, or a section
-  where some but not all seats have both. A section with no declared
-  `layout` MUST NOT mix positioning styles across its seats this way; a
-  validator MUST reject such a document (§4.6). Inference never produces
-  `"mixed"` — a section that intentionally requires every seat to carry
-  both `col` and `x`/`y` MUST declare `layout: "mixed"` explicitly.
+Every seat, element, and section in a map is placed on this one canvas.
+A renderer's **canonical view** draws the whole canvas: every seat at its
+`x`/`y` with its footprint, and every element at its `x`/`y` with its
+size. A renderer chooses the scale from canvas units to its own, and MAY
+crop, zoom, pan, or mirror the whole drawing (§2). It MUST NOT otherwise
+move, resize, or reflow anything in the canonical view, and it does no
+layout arithmetic of its own: no cell sizes, no row spacing, no
+percentages. Two conformant renderers consuming the same `KerusiMap`
+therefore produce the same drawing, down to the size of a seat, and
+whether two seats overlap or how many seats fit across a room is a
+question the document answers, not the renderer.
 
 Placing a seat's position on the seat itself, rather than deriving it
 from the seat's slot in a nested array, is what makes curves, offsets,
-and irregular gaps representable: non-seat space no longer requires a
-filler node to hold a column position open, and no seat is constrained
-to share a straight line with its row-mates. Curved rows, staggered
-rows, and displaced seats are all expressible as seats with independent
-`x`/`y` values, in a section declared or inferred `"freeform"` (or
-`"mixed"`, if some seats in the same section also need grid addressing).
+and irregular gaps representable: non-seat space needs no filler node,
+no seat has to share a straight line with its row-mates, and a seat moved
+off its row's line stays in that row (§4.2.3). One placement rule covers
+every layout — a plain grid, a curved row, a round table, a stadium bowl,
+an aircraft cabin — and a seat's three kinds of information are kept
+apart so that they can never contradict one another:
 
-`x` and `y` are always in the range 0–100, but 0–100 of *what shape*
-becomes significant the moment `rotation` or an `Element`'s
-`width`/`height` is used: a seat rotated 45° on a square canvas will
-render at a visually different angle once stretched onto a 2:1 hall.
-`Section.aspectRatio` (`"width:height"`, e.g. `"16:9"`) fixes the
-canvas's proportions so that percentage coordinates, rotation degrees,
-and element sizing carry consistent meaning regardless of the venue's
-actual proportions. It defaults to `"1:1"` when omitted. It has no
-effect on grid-addressed seats, nor on the grid `width`/`height` spans of
-§4.4.1, which are dimensionless cell counts; it governs percentage-based
-positions and percentage-based element sizing only.
+| Question | Answered by | Used by |
+|---|---|---|
+| Where is the seat drawn? | `x`, `y`, `rotation`, `seatSize` (§4.3.1) | Every renderer |
+| Which seats are next to it? | `row`, `col` (§4.3.5) | Selection, keyboard and screen-reader navigation |
+| What shape was its row meant to have? | `RowMeta.shape` (§4.2.3) | Editors only |
+
+#### 4.5.1 Other views (non-normative)
+
+The canonical view draws every seat at its `x`/`y`. A renderer MAY also
+offer views built from `row` and `col` alone: a reflowed grid for a
+narrow phone screen, a list or table for assistive technology, or a
+"rows" view of a large venue. In such a view shaped rows are
+straightened, seats off their guide go back in line, and aisles — skipped
+`col`s — remain as gaps; rows follow the row order of §4.2.1. Seats with
+no `row` appear only in the canonical view, or in a separate list. This
+keeps the main benefit of the former grid mode — letting the viewer
+choose the layout — as an option beside the canonical drawing rather
+than the only drawing there is.
 
 ### 4.6 Referential integrity
 
@@ -536,7 +606,6 @@ document:
 | Field | Resolves against |
 |---|---|
 | `Seat.row` | `RowMeta.id`, when `Section.rows` is present |
-| `Element.row` | `RowMeta.id`, when `Section.rows` is present |
 | `Seat.type` | `SeatType.id` in `KerusiMap.legend` |
 | `Seat.priceTier` | `PriceTier.id` in `KerusiMap.priceTiers` |
 | `Seat.companions[]` | other `Seat.id` values within the same section |
@@ -545,8 +614,8 @@ A document in which any of these references fails to resolve is
 **invalid**. A conformant validator MUST reject such a document rather
 than allow a renderer to silently drop or mis-price the affected seat.
 The sole exception is `row`: if a section declares no `rows` array at
-all, `Seat.row` and `Element.row` are treated as opaque free-text labels
-with nothing to resolve against, and are always valid.
+all, `Seat.row` is treated as an opaque free-text label with nothing to
+resolve against, and is always valid.
 
 `companions` references MUST be **symmetric**: if seat A lists seat B in
 `companions`, seat B MUST list seat A in return; for a group larger than
@@ -555,21 +624,22 @@ validator MUST reject a `companions` set that is not fully mutual. This
 prevents a multi-seat booth from silently ending up partially linked
 because one seat's array drifted out of sync with the others.
 
-`Section.layout` consistency is a related structural-integrity rule: **a
-validator MUST reject any `Section` where seats do not conform to the
-declared or inferred `layout` mode** defined in §4.5. Like a dangling
-reference, a layout-inconsistent section cannot be rendered
-deterministically — different consumers would disagree on how to
-interpret the same seat data.
+**Positions and adjacency** are validated on the same footing, because
+each failure below would otherwise leave two consumers to disagree about
+where a seat is or which seats are next to it. A conformant validator
+MUST reject a document in which:
 
-Elements are validated on the same footing. A validator MUST reject an
-`Element` whose positioning fields do not match its section's layout mode
-(§4.4.1), and, in a `"grid"` section, an `Element` whose `width` or
-`height` is not a positive integer, or whose row span extends past the
-last row in the section's row order (§4.2.1). Each of these would
-otherwise leave two renderers to disagree about where an element sits or
-how much space it occupies — the element-side equivalent of the seat rule
-above.
+- a seat or an element has no `x` or `y`, or lies outside the canvas
+  (§4.3.1, §4.4.1);
+- a seat carries a `col` that is not a positive integer, or a `col`
+  without a `row` (§4.3.5);
+- two seats in one section share the same `row` and `col` (§4.3.5); or
+- a row shape's `cols` names a first column after its last (§4.2.3).
+
+A validator SHOULD report, and MUST NOT reject a document for, seats
+whose footprints overlap (§4.3.1) and seats outside their section's
+`bounds` (§4.1). Either is likely a producer error, but neither leaves
+the document ambiguous.
 
 **Identifier uniqueness.** A reference is only well-defined if its target
 is: an id that appears twice resolves to two objects, and a consumer is
@@ -585,8 +655,8 @@ within the scope below:
 | `PriceTier.id` | `KerusiMap.priceTiers` |
 | `RowMeta.id` | its own section's `rows` |
 
-`RowMeta.id` is scoped to its section because rows are: `Seat.row` and
-`Element.row` resolve only against their own section's registry, so two
+`RowMeta.id` is scoped to its section because rows are: `Seat.row`
+resolves only against its own section's registry, so two
 sections may each declare a row `"A"`. Each kind of identifier is its own
 namespace — a seat and an element MAY share an id, as MAY a seat type and
 a price tier — since no field references more than one kind.
@@ -651,11 +721,11 @@ time, and is out of scope for this specification.
 
 ### 4.10 Direction labels (optional)
 
-`Seat` already addresses a seat along up to four axes: `row`, `col`,
+`Seat` already describes a seat along up to four axes: `row`, `col`,
 `x`, and `y` (§4.3). None of these carry any inherent real-world
 meaning beyond adjacency and position — `col: 4` is simply "next to
-`col: 3`," the same way `Section.layout` deliberately says nothing about
-which edge of the screen is "first" (§2). Some domains nonetheless have
+`col: 3`," the same way the canvas (§4.5) says nothing about which
+compass direction its `x` axis points in (§2). Some domains nonetheless have
 a genuine physical or geographic direction associated with one or more
 of these axes that is useful to surface to a shopper or to
 domain-specific tooling: which end of a train a row is closer to, or
@@ -665,15 +735,15 @@ purely descriptive way to attach that meaning, without requiring it:
 
 ```ts
 interface Direction {
-  axis: "row" | "col" | "x" | "y";  // REQUIRED. Which addressing axis (§4.3)
-                                       //   this label pair describes.
+  axis: "row" | "col" | "x" | "y";  // REQUIRED. Which axis (§4.3) this
+                                       //   label pair describes.
   low: string | Record<string, string>;   // REQUIRED. Label for the low end —
                                              //   ascending row/col order starting
                                              //   from the section's first row/col,
                                              //   or x/y = 0.
   high: string | Record<string, string>;  // REQUIRED. Label for the high end —
                                              //   descending row/col order, or
-                                             //   x/y = 100.
+                                             //   x = canvas.width, y = canvas.height.
 }
 ```
 
@@ -681,7 +751,10 @@ For `axis: "row"`, "low" and "high" refer to the direction of increasing
 `RowMeta.index` (or declaration order in `Section.rows`, when `index` is
 absent) — the row order of §4.2.1; for `axis: "col"`, to increasing `col`
 values. Both are consistent with the row/col ordering already defined in
-§4.2–§4.3 — no new ordering concept is introduced.
+§4.2–§4.3 — no new ordering concept is introduced. For `axis: "x"` and
+`axis: "y"`, the axes are those of the map's one canvas (§4.5), which
+every section shares; whether these two should therefore be declared on
+the map rather than on each section is open (§10).
 
 A section MAY declare a `Direction` for as many or as few of the four
 axes as are physically meaningful — a train carriage typically only
@@ -879,28 +952,32 @@ the normative rules in §4–§5.
   "kerusi": "1.0",
   "id": "bus-42-2026-08-17",
   "domain": "bus",
+  "canvas": { "width": 252, "height": 60 },
+  "seatSize": 40,
   "legend": [{ "id": "standard", "label": "Standard" }],
   "sections": [
     {
       "id": "main",
       "seats": [
-        { "id": "1A", "row": "1", "col": 1, "type": "standard" },
-        { "id": "1B", "row": "1", "col": 2, "type": "standard" },
-        { "id": "1C", "row": "1", "col": 4, "type": "standard" },
-        { "id": "1D", "row": "1", "col": 5, "type": "standard" }
+        { "id": "1A", "row": "1", "col": 1, "x": 30, "y": 30, "type": "standard" },
+        { "id": "1B", "row": "1", "col": 2, "x": 78, "y": 30, "type": "standard" },
+        { "id": "1C", "row": "1", "col": 4, "x": 174, "y": 30, "type": "standard" },
+        { "id": "1D", "row": "1", "col": 5, "x": 222, "y": 30, "type": "standard" }
       ]
     }
   ]
 }
 ```
 
-Column 3 is simply absent — that is the aisle. No filler entry is
-required (§4.3.2).
+Every seat is drawn at its `x`/`y` as a 40-unit square (§4.3.1). Column 3
+is simply absent — that is the aisle: nothing is drawn at `x: 126`, and
+`1B` and `1C` are not neighbours (§4.3.5). No filler entry is required
+(§4.3.2).
 
-### 6.2 Cinema with curved rows and companion (couple) seats
+### 6.2 Cinema with a curved row and companion (couple) seats
 
-Freeform positioning handles the curve; `companions` links two seats
-sold as a single unit.
+Row A is laid out on an arc, and records it as its shape; `companions`
+links two seats sold as a single unit.
 
 ```json
 {
@@ -908,6 +985,8 @@ sold as a single unit.
   "id": "cinema3-hallA",
   "name": "Hall A",
   "domain": "cinema",
+  "canvas": { "width": 1000, "height": 800 },
+  "seatSize": 40,
   "legend": [
     { "id": "standard", "label": "Standard", "defaultPriceTier": "regular" },
     { "id": "recliner-couple", "label": "Couple Recliner", "defaultPriceTier": "premium" }
@@ -919,28 +998,56 @@ sold as a single unit.
   "sections": [
     {
       "id": "main",
-      "layout": "freeform",
       "rows": [
-        { "id": "A", "label": "A", "index": 0 },
-        { "id": "L", "label": "L (Love Seats)", "index": 11 }
+        {
+          "id": "A",
+          "label": "A",
+          "index": 0,
+          "shape": { "arc": { "center": [500, -300], "radius": 520, "start": 100, "sweep": -20, "cols": [1, 3] } }
+        },
+        {
+          "id": "L",
+          "label": "L (Love Seats)",
+          "index": 11,
+          "shape": { "line": { "from": [480, 700], "to": [520, 700], "cols": [1, 2] } }
+        }
       ],
       "elements": [
-        { "id": "screen", "kind": "screen", "label": "Screen", "x": 50, "y": 2, "width": 80, "height": 3 }
+        { "id": "screen", "kind": "screen", "label": "Screen", "x": 500, "y": 30, "width": 800, "height": 20 }
       ],
       "seats": [
-        { "id": "A1", "label": "1", "row": "A", "x": 20, "y": 20, "rotation": -5, "type": "standard" },
-        { "id": "A2", "label": "2", "row": "A", "x": 26, "y": 19, "rotation": -3, "type": "standard" },
+        { "id": "A1", "label": "1", "row": "A", "col": 1, "x": 410, "y": 212, "rotation": 10, "type": "standard" },
+        { "id": "A2", "label": "2", "row": "A", "col": 2, "x": 500, "y": 220, "rotation": 0, "type": "standard" },
         {
-          "id": "A3", "label": "3", "row": "A", "x": 32, "y": 19, "rotation": -3, "type": "standard",
+          "id": "A3",
+          "label": "3",
+          "row": "A",
+          "col": 3,
+          "x": 590,
+          "y": 212,
+          "rotation": -10,
+          "type": "standard",
           "accessibility": { "wheelchairAccessible": true, "transferArmrest": "left", "aisleChairCompatible": true }
         },
         {
-          "id": "L1", "label": "1", "row": "L", "x": 60, "y": 70,
-          "type": "recliner-couple", "companions": ["L2"]
+          "id": "L1",
+          "label": "1",
+          "row": "L",
+          "col": 1,
+          "x": 480,
+          "y": 700,
+          "type": "recliner-couple",
+          "companions": ["L2"]
         },
         {
-          "id": "L2", "label": "2", "row": "L", "x": 66, "y": 70,
-          "type": "recliner-couple", "companions": ["L1"]
+          "id": "L2",
+          "label": "2",
+          "row": "L",
+          "col": 2,
+          "x": 520,
+          "y": 700,
+          "type": "recliner-couple",
+          "companions": ["L1"]
         }
       ]
     }
@@ -948,9 +1055,14 @@ sold as a single unit.
 }
 ```
 
-Each seat's own `rotation` allows `A1` and `A2` to follow the curve of
-the screen independently — they are not constrained to share an angle
-merely because they belong to the same row.
+Each seat is drawn where its `x`/`y` puts it, and its own `rotation` lets
+`A1`, `A2` and `A3` face the screen independently — they are not
+constrained to share an angle merely because they share a row. The arc
+does not place them: it records that row A was laid out on a circle of
+radius 520 round `[500, -300]`, so that an editor can reopen the row as
+an arc. Each seat lies on its guide point (§4.2.3) — `A2`'s, for
+instance, is at 90°, straight below the centre. Rows A and L sit at
+`index` 0 and 11, which orders them and places nothing (§4.2.1).
 
 ### 6.3 Flight with cabin classes and exit row
 
@@ -964,6 +1076,8 @@ flight reuses it via a `KerusiSession`.
   "id": "b738-2class-v1",
   "name": "Boeing 737-800, 2-class",
   "domain": "flight",
+  "canvas": { "width": 300, "height": 240 },
+  "seatSize": 40,
   "legend": [
     { "id": "economy", "label": "Economy", "defaultPriceTier": "eco" },
     { "id": "business", "label": "Business", "defaultPriceTier": "biz" }
@@ -976,25 +1090,48 @@ flight reuses it via a `KerusiSession`.
     {
       "id": "business",
       "label": "Business",
+      "seatSize": 50,
+      "bounds": { "x": 0, "y": 20, "width": 300, "height": 80 },
       "seats": [
-        { "id": "1A", "row": "1", "col": 1, "type": "business", "attributes": ["window"] },
-        { "id": "1C", "row": "1", "col": 2, "type": "business", "attributes": ["aisle"] },
-        { "id": "1D", "row": "1", "col": 4, "type": "business", "attributes": ["aisle"] },
-        { "id": "1F", "row": "1", "col": 5, "type": "business", "attributes": ["window"] }
+        { "id": "1A", "row": "1", "col": 1, "x": 50, "y": 60, "type": "business", "attributes": ["window"] },
+        { "id": "1C", "row": "1", "col": 2, "x": 106, "y": 60, "type": "business", "attributes": ["aisle"] },
+        { "id": "1D", "row": "1", "col": 4, "x": 194, "y": 60, "type": "business", "attributes": ["aisle"] },
+        { "id": "1F", "row": "1", "col": 5, "x": 250, "y": 60, "type": "business", "attributes": ["window"] }
       ]
     },
     {
       "id": "economy",
       "label": "Economy",
+      "bounds": { "x": 0, "y": 140, "width": 300, "height": 80 },
       "seats": [
-        { "id": "12A", "row": "12", "col": 1, "type": "economy", "attributes": ["window", "exit-row"] },
-        { "id": "12B", "row": "12", "col": 2, "type": "economy", "attributes": ["exit-row"] },
-        { "id": "12C", "row": "12", "col": 3, "type": "economy", "attributes": ["aisle", "exit-row"] }
+        {
+          "id": "12A",
+          "row": "12",
+          "col": 1,
+          "x": 54,
+          "y": 180,
+          "type": "economy",
+          "attributes": ["window", "exit-row"]
+        },
+        { "id": "12B", "row": "12", "col": 2, "x": 98, "y": 180, "type": "economy", "attributes": ["exit-row"] },
+        {
+          "id": "12C",
+          "row": "12",
+          "col": 3,
+          "x": 142,
+          "y": 180,
+          "type": "economy",
+          "attributes": ["aisle", "exit-row"]
+        }
       ]
     }
   ]
 }
 ```
+
+The two cabins are two sections on one canvas (§4.5), business above
+economy, each with `bounds` a consumer can zoom to (§4.1). Business seats
+are larger: the section's `seatSize` of 50 overrides the map's 40.
 
 ### 6.4 Matching state (direct `mapId`)
 
@@ -1050,12 +1187,12 @@ both reference the same cached `b738-2class-v1` map.
 The train's rows run front-to-back; only one axis is physically
 meaningful. A tennis court's seating faces the court from all sides, so
 both spatial axes carry a compass direction relevant to sun and
-lighting:
+lighting. Both are sections, shown without the maps around them; the
+court's map has a 1600 × 900 canvas.
 
 ```json
 {
   "id": "coach-b",
-  "layout": "grid",
   "rows": [
     { "id": "1", "index": 0 },
     { "id": "2", "index": 1 }
@@ -1064,8 +1201,8 @@ lighting:
     { "axis": "row", "low": "front of train", "high": "back of train" }
   ],
   "seats": [
-    { "id": "1A", "row": "1", "col": 1, "type": "standard" },
-    { "id": "2A", "row": "2", "col": 1, "type": "standard" }
+    { "id": "1A", "row": "1", "col": 1, "x": 30, "y": 30, "type": "standard" },
+    { "id": "2A", "row": "2", "col": 1, "x": 30, "y": 78, "type": "standard" }
   ]
 }
 ```
@@ -1073,77 +1210,148 @@ lighting:
 ```json
 {
   "id": "court1-east-stand",
-  "layout": "freeform",
   "directions": [
     { "axis": "x", "low": "west", "high": "east" },
     { "axis": "y", "low": "south", "high": "north" }
   ],
   "seats": [
-    { "id": "E1", "x": 10, "y": 50, "type": "standard" }
+    { "id": "E1", "x": 160, "y": 450, "type": "standard" }
   ]
 }
 ```
 
-### 6.7 Grid cinema with screen headroom
+### 6.7 Rows, a round table, and a balcony
 
-The cinema in §6.2 is freeform, where vertical space costs nothing: the
-screen sits at `y: 2` and row A at `y: 19`. This is the same kind of room
-addressed as a grid, where space has to be declared. Four rows carry no
-seats — `screen-1` and `screen-2` hold the screen, `throw` is the gap
-between the screen and the front row, and `cross-aisle` is a walkway
-between rows B and C. Column 3 is the centre aisle, omitted as in §6.1.
+A town hall with a stage, one straight row with a centre aisle, a round
+table, a wheelchair space, and a curved balcony. The two sections share
+the canvas (§4.5).
 
 ```json
 {
   "kerusi": "1.0",
-  "id": "cinema3-hallB",
-  "name": "Hall B",
-  "domain": "cinema",
+  "id": "town-hall",
+  "name": "Town Hall",
+  "canvas": { "width": 1600, "height": 900 },
+  "seatSize": 40,
   "legend": [
-    { "id": "standard", "label": "Standard", "defaultPriceTier": "regular" }
+    { "id": "std", "label": "Standard", "defaultPriceTier": "regular" },
+    { "id": "wheelchair", "label": "Wheelchair space", "defaultPriceTier": "regular" }
   ],
-  "priceTiers": [
-    { "id": "regular", "price": { "amount": 1500, "currency": "MYR" } }
-  ],
+  "priceTiers": [{ "id": "regular", "price": { "amount": 2500, "currency": "MYR" } }],
   "sections": [
     {
       "id": "stalls",
-      "layout": "grid",
+      "label": "Stalls",
+      "index": 0,
+      "bounds": { "x": 280, "y": 60, "width": 1180, "height": 680 },
       "rows": [
-        { "id": "screen-1", "index": 0 },
-        { "id": "screen-2", "index": 1 },
-        { "id": "throw", "index": 2 },
-        { "id": "A", "label": "A", "index": 3 },
-        { "id": "B", "label": "B", "index": 4 },
-        { "id": "cross-aisle", "index": 5 },
-        { "id": "C", "label": "C", "index": 6 }
+        { "id": "A", "label": "A", "shape": { "line": { "from": [320, 400], "to": [1088, 400], "cols": [1, 9] } } },
+        {
+          "id": "T1",
+          "label": "Table 1",
+          "shape": { "circle": { "center": [1300, 300], "radius": 70, "start": -90, "cols": [1, 4] } }
+        }
       ],
       "elements": [
+        { "id": "stage", "kind": "stage", "label": "Stage", "x": 800, "y": 126, "width": 800, "height": 90 }
+      ],
+      "seats": [
+        { "id": "A1", "row": "A", "col": 1, "x": 320, "y": 400, "type": "std" },
+        { "id": "A2", "row": "A", "col": 2, "x": 416, "y": 400, "type": "std" },
+        { "id": "A3", "row": "A", "col": 3, "x": 512, "y": 400, "type": "std" },
+        { "id": "A4", "row": "A", "col": 4, "x": 608, "y": 400, "type": "std" },
+        { "id": "A6", "row": "A", "col": 6, "x": 800, "y": 400, "type": "std" },
+        { "id": "A7", "row": "A", "col": 7, "x": 896, "y": 400, "type": "std" },
+        { "id": "A8", "row": "A", "col": 8, "x": 992, "y": 400, "type": "std" },
+        { "id": "A9", "row": "A", "col": 9, "x": 1100, "y": 440, "type": "std" },
         {
-          "id": "screen", "kind": "screen", "label": "SCREEN",
-          "row": "screen-1", "height": 2
+          "id": "T1-1",
+          "row": "T1",
+          "col": 1,
+          "x": 1300,
+          "y": 230,
+          "type": "std",
+          "companions": ["T1-2", "T1-3", "T1-4"]
+        },
+        {
+          "id": "T1-2",
+          "row": "T1",
+          "col": 2,
+          "x": 1370,
+          "y": 300,
+          "type": "std",
+          "companions": ["T1-1", "T1-3", "T1-4"]
+        },
+        {
+          "id": "T1-3",
+          "row": "T1",
+          "col": 3,
+          "x": 1300,
+          "y": 370,
+          "type": "std",
+          "companions": ["T1-1", "T1-2", "T1-4"]
+        },
+        {
+          "id": "T1-4",
+          "row": "T1",
+          "col": 4,
+          "x": 1230,
+          "y": 300,
+          "type": "std",
+          "companions": ["T1-1", "T1-2", "T1-3"]
+        },
+        { "id": "S1", "x": 1408, "y": 702, "type": "wheelchair" }
+      ]
+    },
+    {
+      "id": "balcony",
+      "label": "Balcony",
+      "index": 1,
+      "bounds": { "x": 440, "y": 580, "width": 720, "height": 220 },
+      "rows": [
+        {
+          "id": "L",
+          "label": "L",
+          "shape": { "arc": { "center": [800, 60], "radius": 640, "start": 120, "sweep": -60, "cols": [1, 7] } }
         }
       ],
       "seats": [
-        { "id": "A1", "label": "1", "row": "A", "col": 1, "type": "standard" },
-        { "id": "A2", "label": "2", "row": "A", "col": 2, "type": "standard" },
-        { "id": "A3", "label": "3", "row": "A", "col": 4, "type": "standard" },
-        { "id": "B1", "label": "1", "row": "B", "col": 1, "type": "standard" },
-        { "id": "B2", "label": "2", "row": "B", "col": 2, "type": "standard" },
-        { "id": "B3", "label": "3", "row": "B", "col": 4, "type": "standard" },
-        { "id": "C1", "label": "1", "row": "C", "col": 1, "type": "standard" }
+        { "id": "L1", "row": "L", "col": 1, "x": 480, "y": 614, "type": "std" },
+        { "id": "L2", "row": "L", "col": 2, "x": 581, "y": 661, "type": "std" },
+        { "id": "L3", "row": "L", "col": 3, "x": 689, "y": 690, "type": "std" },
+        { "id": "L4", "row": "L", "col": 4, "x": 800, "y": 700, "type": "std" },
+        { "id": "L5", "row": "L", "col": 5, "x": 930, "y": 760, "type": "std" },
+        { "id": "L6", "row": "L", "col": 6, "x": 1019, "y": 661, "type": "std" },
+        { "id": "L7", "row": "L", "col": 7, "x": 1120, "y": 614, "type": "std" }
       ]
     }
   ]
 }
 ```
 
-Every row above is a real row: a consumer materializes seven of them in
-`index` order, four with no seats (§4.2.2). The screen occupies the first
-two because `height: 2` is a row span, and it spans the full width of the
-section because `col` is omitted (§4.4.1). None of this is a renderer
-setting — the same document produces the same vertical arrangement in any
-conformant renderer.
+Each of the three kinds of information about a seat is read from its own
+fields, and none of them overrides another:
+
+- **Where each seat is drawn** is its `x`/`y` and nothing else. The stage
+  is an element 800 × 90 units in size, and the space between it and row
+  A is just space: no row is declared to hold it open (§4.2.2).
+- **Which seats are neighbours** is `row` and `col` alone (§4.3.5). Row A
+  has no column 5, so `A4` and `A6` are not neighbours, and its line
+  leaves a gap there, at `x: 704` — the aisle. `A9` has been moved off the
+  line, down and to the right; it is still in row A and still next to
+  `A8`. `S1` has no `row` or `col`, so it has no neighbours at all. The
+  table's four seats are one row, `T1`, and one companion group (§4.6).
+- **What shape each row was meant to have** is its `shape`, which only an
+  editor reads (§4.2.3). `A1`–`A8` are on row A's line, and `A9`, about
+  42 units from its guide point at `x: 1088`, is off it. The table's
+  seats sit 90° apart round its circle, starting straight above the
+  centre. Balcony seat `L5` was dragged off the arc — its guide point is
+  at about `(911, 690)`. An editor that widens the arc moves the other six
+  seats to their new guide points and leaves `L5` where it is.
+
+`T1-1` sits above the table's centre, at −90°, and `L4` below the
+balcony arc's centre, at 90°, because angles are measured on the canvas
+axes, with `y` pointing down.
 
 ---
 
@@ -1166,30 +1374,32 @@ A consumer (renderer, validator, or intermediary) is conformant if it:
   (§3);
 - enforces the referential-integrity rules of §4.6, including
   `companions` symmetry and identifier uniqueness;
-- enforces `Section.layout` consistency (§4.5–§4.6), rejecting any
-  section whose seats do not conform to their declared or inferred
-  `layout` mode;
-- orders a map's sections as defined by §4.1.1;
-- materializes every row a section declares, including rows no seat
-  references, in the order defined by §4.2.1 (§4.2.2);
-- enforces the element positioning and sizing rules of §4.4.1, including
-  grid span integrality and row-span bounds (§4.6);
+- enforces the position and adjacency rules of §4.6, rejecting any seat
+  or element without a position or outside the canvas, and any section in
+  which two seats share a `row` and `col`;
+- draws its canonical view as §4.5 defines it, every seat at its `x`/`y`
+  with the footprint of §4.3.1, and never moves a seat because of its
+  `row`, its `col`, or its row's shape (§4.2.3, §4.3.5);
+- derives adjacency only as §4.3.5 defines it;
+- orders a map's sections as defined by §4.1.1, and a section's rows as
+  defined by §4.2.1;
 - applies the price-resolution order of §4.9; and
 - ignores unrecognized members rather than rejecting the document
   because of them (§2).
 
-**Validators MUST enforce `Section.layout` consistency at v1.0** — this
-is not deferred to a future minor version. A `KerusiMap` with a
-layout-inconsistent section is invalid from the first stable release.
+**Validators MUST enforce seat positions at v1.0** — this is not
+deferred to a future minor version. A `KerusiMap` with a seat that has no
+position, or a position off its canvas, is invalid from the first stable
+release.
 
 A validator implementation SHOULD be published as a JSON Schema per
 version (§8) so that conformance can be checked mechanically rather than
 by inspection of this document.
 
 Rejecting a document with a dangling `row`/`type`/`priceTier`/`companions`
-reference, a duplicate identifier, or a layout-inconsistent section
-(§4.6), is deliberately
-strict rather than lenient: silently dropping or mis-pricing the affected
+reference, a duplicate identifier, a seat off the canvas, or two seats
+sharing a row and column (§4.6), is deliberately strict rather than
+lenient: silently dropping or mis-pricing the affected
 seat instead would hide a producer/consumer sync bug behind a
 customer-facing symptom, at exactly the point where it is most expensive
 to diagnose. This specification does not relax that rule, but
@@ -1197,7 +1407,7 @@ implementers are not required to discover it at render time — a producer
 SHOULD validate a `KerusiMap` before publishing it (e.g. in CI, against
 the JSON Schema above), and a gateway or intermediary SHOULD treat a
 validation failure as an alertable condition rather than degrade
-silently, so that referential or layout drift is caught long before it
+silently, so that referential or positional drift is caught long before it
 reaches a renderer.
 
 ## 8. Registration and Interchange Conventions
@@ -1267,10 +1477,16 @@ this specification exits draft status:
 
 - **Labelled gaps.** Should `Element` gain a dedicated `"gap"`/`"aisle"`
   convention beyond a free-text `kind`, for recurring cases like
-  "STAIRS" printed mid-row? Rev 12 settled what an `Element` may do with
-  space — its `width`/`height` units are now normative in both modes
-  (§4.4.1) — so what remains open here is the `kind` vocabulary, not the
-  geometry underneath it.
+  "STAIRS" printed mid-row? Rev 15 settled an `Element`'s geometry — it is
+  placed and sized in canvas units, as a seat is (§4.4.1) — so what
+  remains open here is the `kind` vocabulary, not the geometry underneath
+  it. A `"table"` kind, for drawing a tabletop under a `circle` row
+  (§4.2.3), would belong in that vocabulary.
+- **Map-level directions.** Every section now shares one canvas (§4.5),
+  so an `x` or `y` `Direction` (§4.10) describes the whole map, yet it is
+  still declared per section, and two sections may disagree about which
+  way the same axis faces. Whether `x`/`y` directions should move to
+  `KerusiMap`, leaving `row`/`col` directions on `Section`.
 - **Normative status of `domain`.** Whether `domain` (§4) remains purely
   informational, or whether a future revision uses it to select
   domain-specific required fields.
@@ -1285,6 +1501,99 @@ semantics (resolved as intentionally delegated to the booking engine,
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 15** — Replaced the three positioning modes with one
+  canvas. Every seat is positioned, rows say which seats are neighbours,
+  and row shapes record a row's intended form for editors.
+
+  **Why.** `Section.layout` placed seats in three ways — `"grid"`,
+  `"freeform"`, `"mixed"` — each with its own rules for seats, elements,
+  empty rows, spans, and `aspectRatio`, and building a map editor and a
+  booking app on the format showed that they do not compose. `"mixed"`
+  could not express the case it existed for: displacing one seat around
+  an obstruction meant inventing `x`/`y` for every other seat, and a
+  `col` for seats that had none. A grid had no defined shape, since a
+  renderer decided what a cell measured, so a map designer's canvas could
+  only approximate the booking page. Freeform seats had a position and no
+  size, and three implementations drew the same section at three seat
+  sizes. `x` and `y` were percentages of different lengths, so rotations
+  and element sizes needed `aspectRatio` to mean anything. Sections had
+  an order and no position, so "rows in front of a stage, tables along one
+  wall" could not be two sections side by side. And a curved row or a
+  round table survived a round trip only in an editor's private
+  `metadata`.
+
+  **What changed.** Three kinds of information about a seat are now kept
+  apart, so that they cannot contradict one another (§4.5):
+
+  - *Where a seat is drawn.* `KerusiMap.canvas` and `KerusiMap.seatSize`
+    are REQUIRED (§4.5): one canvas per map in units with the same scale
+    both ways, and a square footprint for every seat, which a section MAY
+    override. `Seat.x` and `Seat.y` are REQUIRED, in canvas units, and MUST
+    lie on the canvas (§4.3.1); `rotation` is clockwise on screen.
+    Renderers do no layout arithmetic, so two of them draw the same map
+    identically, and whether seats overlap — which a validator SHOULD now
+    report — is checkable from the document.
+  - *Which seat is next to which.* `row` and `col` are OPTIONAL, `col` is
+    a positive integer that requires `row`, and no two seats in a section
+    share both (§4.3.5). Two seats are neighbours exactly when they share
+    a section and a row and their `col`s differ by 1; a skipped `col` is
+    an aisle. Neither field ever places a seat.
+  - *What shape a row was meant to have.* `RowMeta.shape` is an OPTIONAL
+    `line`, `arc`, or `circle` with a column range (§4.2.3). It is a guide
+    for editors: it never moves a seat and never decides a seat's row, and
+    a seat within `seatSize / 4` of its guide point is "on its guide," so
+    an editor can re-space a curve while leaving one seat moved off it
+    alone.
+
+  Sections are named zones on the shared canvas rather than canvases of
+  their own, with an OPTIONAL `bounds` for zooming and thumbnails (§4.1).
+  `Element.x` and `Element.y` are REQUIRED, `width` and `height` are in
+  canvas units and default to the seat size, and elements carry no `row`
+  or `col` (§4.4.1). `Direction` labels for `x` and `y` now end at
+  `canvas.width` and `canvas.height` rather than 100 (§4.10). §4.5.1 notes
+  that a renderer MAY still offer views built from rows alone — a
+  reflowed grid on a phone, a list for assistive technology — beside the
+  canonical drawing. Every example in §6 is rewritten, and §6.7 is now a
+  hall with an aisle, a seat moved off its row, a round table, and a
+  curved balcony.
+
+  **Removed.** `Section.layout`, its three modes, and the inference rules
+  of the former §4.5; `Section.aspectRatio`; placing seats and elements by
+  `row`/`col`, and element `width`/`height` as cell spans; `Element.row`
+  and `Element.col`; and the empty rows of rev 12 that reserved vertical
+  space. An empty row remains valid as a label but reserves nothing
+  (§4.2.2): space is simply space on the canvas.
+
+  **Questions settled.** This is a draft revision of 1.0 rather than a
+  2.0, since 1.0 has not left draft and its only consumers are the
+  editor's own. `seatSize` is a single number — a square seat — until a
+  real case for wider seats (sofas, wheelchair bays, sleeper berths)
+  appears. `bounds` is included now, as the one thing a consumer needs to
+  zoom to a section. `seatSize / 4` is the guide tolerance. No
+  section-level "block" shape is added: a `line` per row is enough to
+  reopen a block of rows. Whether `x`/`y` directions move to the map is
+  left open (§10).
+
+  **Migrating a rev 14 map** (non-normative). A freeform section: choose a
+  canvas with its `aspectRatio` (16:9 → 1600 × 900), then
+  `x' = x / 100 × width` and `y' = y / 100 × height`, scaling element
+  sizes the same way. A grid section: lay its cells out once with a fixed
+  pitch — a 28-unit seat with a 6-unit gap reproduces a common renderer's
+  current drawing — write the result as `x`/`y`, keep `row` and `col` as
+  adjacency, and optionally give each row a `line` shape across its
+  columns. A mixed section: as freeform, keeping `col` where it meant
+  something and dropping it where it was only there to pass validation.
+  Several sections: place them on one canvas in `index` order, stacked as
+  they were drawn before, so that the drawing does not change, and
+  optionally give each `bounds`. Arcs and tables kept in `metadata` become
+  `arc` and `circle` shapes.
+
+  This is a breaking change: no rev 14 map is valid under rev 15 without
+  migration. Documents still declare `"kerusi": "1.0"`, as they have
+  through every draft revision, and will until 1.0 is final. Since the
+  document alone cannot say which draft revision it was written for, the
+  JSON Schemas published under §8 now carry the revision in their version,
+  as `1.0.0-draft.15`, so a tool can say which revision it validates.
 - **1.0.0-draft, rev 14** — Closed two gaps around sections.
 
   **Section order.** `Section.index` carried only an interface comment,

@@ -1,7 +1,7 @@
 /**
  * TypeScript interfaces for the Kerusi seat map and availability format,
- * v1.0.0-draft — a transcription of the declarations in sections 4 and 5 of
- * RFC/kerusi-standard_v1.0.0-draft.md.
+ * v1.0.0-draft, rev 15 — a transcription of the declarations in sections 4
+ * and 5 of RFC/kerusi-standard_v1.0.0-draft.md.
  *
  * Section 8 names `@kerusi/schema` (JSON Schema plus TypeScript types, no
  * runtime dependencies) as the package these belong in. Types are declarations
@@ -19,7 +19,7 @@ export type LocalizableString = string | Record<string, string>;
 
 // --- Section 4: the KerusiMap document -------------------------------------
 
-/** The reusable physical configuration: legend, price tiers, sections (section 4). */
+/** The reusable physical configuration: canvas, legend, price tiers, sections (section 4). */
 export interface KerusiMap {
   /** The version of the specification this document conforms to. */
   kerusi: '1.0';
@@ -35,6 +35,17 @@ export interface KerusiMap {
   domain?: string;
   /** BCP-47 language tag. Default: "en". */
   locale?: string;
+  /**
+   * The one drawing surface every seat, element and section is placed on
+   * (section 4.5). Unitless, with the same scale on both axes.
+   */
+  canvas: Canvas;
+  /**
+   * A seat's footprint: a square of this side, in canvas units, centred on the
+   * seat's x/y and turned by its rotation (section 4.5). Positive. A section
+   * MAY override it.
+   */
+  seatSize: number;
   /** Vocabulary of seat types used in this map; `Seat.type` resolves against it. */
   legend: SeatType[];
   /** Named price tiers, referenced by id. */
@@ -44,8 +55,28 @@ export interface KerusiMap {
 }
 
 /**
- * A flat list of seats, not a grid of rows containing seats (section 4.1): a
- * seat's position is a property of the seat, not a slot in a shared array.
+ * The map's canvas (section 4.5). Both dimensions positive. The origin is the
+ * top-left corner, x grows to the right and y grows downwards.
+ */
+export interface Canvas {
+  width: number;
+  height: number;
+}
+
+/** A rectangle on the canvas: top-left corner and size, in canvas units. */
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** [x, y] in canvas units. */
+export type Point = [number, number];
+
+/**
+ * A named zone on the map's canvas (section 4.1) — not a canvas of its own.
+ * Holds a flat list of seats, not a grid of rows containing seats.
  */
 export interface Section {
   /** Unique within the KerusiMap (section 4.6). */
@@ -58,24 +89,18 @@ export interface Section {
    * declaration order; ties keep declaration order.
    */
   index?: number;
+  /** Overrides `KerusiMap.seatSize` for this section's seats and elements. */
+  seatSize?: number;
   /**
-   * A strict, validated positioning constraint, not a rendering hint
-   * (section 4.5). When omitted, a validator MUST infer it from the section's
-   * seats — as "grid" or "freeform" only, never "mixed" — and MUST reject a
-   * section whose seats fit neither.
+   * The section's extent on the canvas, for zooming to a section, thumbnails
+   * and legends. Does not affect drawing; the section's seats SHOULD lie
+   * inside it.
    */
-  layout?: 'grid' | 'freeform' | 'mixed';
+  bounds?: Bounds;
   /**
-   * "width:height", e.g. "16:9", both dimensions non-zero. Fixes the canvas
-   * proportions that percentage coordinates, rotation and element sizing are
-   * measured against. Meaningful only for freeform/mixed. Default: "1:1".
-   */
-  aspectRatio?: string;
-  /**
-   * Optional row registry — labels, order, empty rows. NOT a container: seats
-   * stay in `seats` (section 4.2). When present it is the section's complete,
-   * ordered row registry, and every `Seat.row`/`Element.row` MUST resolve
-   * against it.
+   * Optional row registry — labels, order, shapes. NOT a container: seats stay
+   * in `seats` (section 4.2). When present it is the section's complete,
+   * ordered row registry, and every `Seat.row` MUST resolve against it.
    */
   rows?: RowMeta[];
   /** Optional, purely informational human-facing axis labels (section 4.10). */
@@ -89,8 +114,7 @@ export interface Section {
 
 /**
  * Purely descriptive row metadata (section 4.2). A `RowMeta` that no seat
- * references is an empty row: valid, and it still reserves one row of vertical
- * space in the section's row order (section 4.2.2).
+ * references is valid and reserves no space (section 4.2.2).
  */
 export interface RowMeta {
   /** Unique within its section; another section MAY reuse it (section 4.6). */
@@ -102,23 +126,56 @@ export interface RowMeta {
    * adjacent.
    */
   index?: number;
+  /**
+   * The form the row was laid out in, for editors (section 4.2.3). A guide
+   * only: it MUST NOT move any seat, renderers ignore it, and it never decides
+   * which row a seat is in.
+   */
+  shape?: RowShape;
   metadata?: Record<string, unknown>;
 }
+
+/**
+ * Exactly one of `line`, `arc` or `circle` (section 4.2.3). Angles are in
+ * degrees on the canvas axes — 0 points right, 90 points down — and `cols` is
+ * [first, last], with first not exceeding last.
+ */
+export type RowShape =
+  | { line: { from: Point; to: Point; cols: [number, number] } }
+  | {
+      arc: {
+        center: Point;
+        radius: number;
+        start: number;
+        /** Positive turns clockwise on screen. */
+        sweep: number;
+        cols: [number, number];
+      };
+    }
+  | { circle: { center: Point; radius: number; start: number; cols: [number, number] } };
 
 export interface Seat {
   /** Unique within the whole KerusiMap, not merely within its section. */
   id: string;
   /** Display label, e.g. "12" or "12A". Defaults to id. */
   label?: string;
-  /** References `RowMeta.id` when the section declares `rows`; free text otherwise. */
+  /**
+   * References `RowMeta.id` when the section declares `rows`; free text
+   * otherwise. The only way a seat joins a row (section 4.2.3).
+   */
   row?: string;
-  /** Grid column within the row. */
+  /**
+   * Positive integer adjacency ordinal within `row`, which it requires. Seats
+   * in the same section and row whose cols differ by 1 are neighbours; a
+   * skipped col is an aisle (section 4.3.5). No two seats in a section share a
+   * row and col. Never affects where the seat is drawn.
+   */
   col?: number;
-  /** 0–100, percent of section width (see `Section.aspectRatio`). */
-  x?: number;
-  /** 0–100, percent of section height. */
-  y?: number;
-  /** Degrees. Lets one seat tilt independently of its neighbours. */
+  /** Centre of the footprint, in canvas units, 0 to `canvas.width` (section 4.3.1). */
+  x: number;
+  /** Centre of the footprint, in canvas units, 0 to `canvas.height`. */
+  y: number;
+  /** Degrees, clockwise on screen, about the seat's centre. */
   rotation?: number;
   /** References a `SeatType.id` in the map's legend. */
   type: string;
@@ -153,8 +210,8 @@ export interface Accessibility {
 }
 
 /**
- * A non-bookable feature that still requires rendering (section 4.4), subject
- * to the same positioning constraint as its section's seats (section 4.4.1).
+ * A non-bookable feature that still requires rendering (section 4.4), placed on
+ * the canvas exactly as a seat is (section 4.4.1).
  */
 export interface Element {
   /** Unique within the whole KerusiMap, not merely within its section (section 4.6). */
@@ -162,22 +219,15 @@ export interface Element {
   /** "screen" | "stage" | "exit" | "lavatory" | "gap" | "aisle" | implementation-defined. */
   kind: string;
   label?: string;
-  row?: string;
-  col?: number;
-  x?: number;
-  y?: number;
-  /**
-   * A column span in cells in a grid-addressed element (positive integer,
-   * default 1; ignored when `col` is omitted, which spans the section's full
-   * column extent), a percentage of section width in a freeform one.
-   */
+  /** Centre, in canvas units, 0 to `canvas.width`. */
+  x: number;
+  /** Centre, in canvas units, 0 to `canvas.height`. */
+  y: number;
+  /** Canvas units. Default: the applicable seatSize. */
   width?: number;
-  /**
-   * A row span in cells in a grid-addressed element (positive integer, default
-   * 1) that MUST NOT extend past the last row in the section's row order, a
-   * percentage of section height in a freeform one.
-   */
+  /** Canvas units. Default: the applicable seatSize. */
   height?: number;
+  /** Degrees, clockwise on screen, about the element's centre. */
   rotation?: number;
   metadata?: Record<string, unknown>;
 }
@@ -208,15 +258,15 @@ export interface Money {
 }
 
 /**
- * An optional, purely descriptive label pair for one addressing axis
- * (section 4.10). Non-normative: it MUST NOT be used by a validator to reject a
- * document, nor relied upon by a renderer to decide layout.
+ * An optional, purely descriptive label pair for one axis (section 4.10).
+ * Non-normative: it MUST NOT be used by a validator to reject a document, nor
+ * relied upon by a renderer to decide layout.
  */
 export interface Direction {
   axis: 'row' | 'col' | 'x' | 'y';
   /** Label for the low end — ascending row/col order from the first row/col, or x/y = 0. */
   low: LocalizableString;
-  /** Label for the high end — descending row/col order, or x/y = 100. */
+  /** Label for the high end — descending row/col order, or x = canvas.width / y = canvas.height. */
   high: LocalizableString;
 }
 

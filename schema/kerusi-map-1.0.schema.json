@@ -2,12 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-map-1.0.schema.json",
   "title": "Kerusi Map",
-  "description": "A reusable physical seating configuration: legend, price tiers, sections, seats, and non-bookable elements (Kerusi v1.0, RFC section 4).",
-  "version": "1.0.0-draft",
+  "description": "A reusable physical seating configuration: one canvas, a seat size, legend, price tiers, sections, seats, and non-bookable elements (Kerusi v1.0, RFC section 4).",
+  "version": "1.0.0-draft.15",
   "type": "object",
   "required": [
     "kerusi",
     "id",
+    "canvas",
+    "seatSize",
     "legend",
     "sections"
   ],
@@ -46,6 +48,13 @@
       "description": "BCP-47 language tag. Default: 'en'.",
       "$comment": "Full BCP-47 well-formedness is not enforced here; a validator MAY check it separately."
     },
+    "canvas": {
+      "$ref": "#/$defs/Canvas"
+    },
+    "seatSize": {
+      "$ref": "#/$defs/SeatSize",
+      "description": "A seat's footprint: a square of this side, in canvas units, centred on the seat's x/y and turned by its rotation (section 4.5). A section MAY override it."
+    },
     "legend": {
       "type": "array",
       "items": {
@@ -72,7 +81,7 @@
     }
   },
   "additionalProperties": false,
-  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), layout inference for sections with no declared layout (section 4.5), companions symmetry (section 4.6), identifier uniqueness (sections 4.3 and 4.6), element row-span bounds (section 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema: schema/validator.mjs runs this schema and then those rules. See schema/README.md.",
+  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), positions within the canvas (section 4.3.1), row/col uniqueness (section 4.3.5), row shape column ranges (section 4.2.3), companions symmetry (section 4.6), identifier uniqueness (sections 4.3 and 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema: schema/validator.mjs runs this schema and then those rules. See schema/README.md.",
   "$defs": {
     "LocalizableString": {
       "description": "A plain string, or a locale map such as { \"en\": \"Orchestra\", \"ms\": \"Orkestra\" }.",
@@ -88,6 +97,90 @@
           }
         }
       ]
+    },
+    "Canvas": {
+      "type": "object",
+      "title": "Canvas",
+      "description": "The one drawing surface of a map (section 4.5). Abstract units with the same scale on both axes; the origin is the top-left corner, x grows to the right and y grows downwards.",
+      "required": [
+        "width",
+        "height"
+      ],
+      "properties": {
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SeatSize": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "The side of a seat's square footprint, in canvas units (section 4.5)."
+    },
+    "Point": {
+      "type": "array",
+      "description": "[x, y] in canvas units.",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "minItems": 2,
+      "items": false
+    },
+    "ColRange": {
+      "type": "array",
+      "description": "[first, last]: the columns a row shape spans (section 4.2.3).",
+      "$comment": "first MUST NOT exceed last; comparing the two items is beyond JSON Schema and is enforced by a custom validator.",
+      "prefixItems": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "integer",
+          "minimum": 1
+        }
+      ],
+      "minItems": 2,
+      "items": false
+    },
+    "Bounds": {
+      "type": "object",
+      "title": "Bounds",
+      "description": "A rectangle on the canvas: top-left corner and size, in canvas units (section 4.1).",
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "Money": {
       "type": "object",
@@ -190,11 +283,98 @@
       },
       "additionalProperties": false
     },
+    "RowShape": {
+      "type": "object",
+      "title": "RowShape",
+      "description": "Exactly one of line, arc or circle: a guide recording the form a row was laid out in, for editors (section 4.2.3). It MUST NOT move any seat.",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "line": {
+          "type": "object",
+          "required": [
+            "from",
+            "to",
+            "cols"
+          ],
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/Point"
+            },
+            "to": {
+              "$ref": "#/$defs/Point"
+            },
+            "cols": {
+              "$ref": "#/$defs/ColRange"
+            }
+          },
+          "additionalProperties": false
+        },
+        "arc": {
+          "type": "object",
+          "required": [
+            "center",
+            "radius",
+            "start",
+            "sweep",
+            "cols"
+          ],
+          "properties": {
+            "center": {
+              "$ref": "#/$defs/Point"
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "start": {
+              "type": "number",
+              "description": "Degrees on the canvas axes: 0 points right, 90 points down."
+            },
+            "sweep": {
+              "type": "number",
+              "description": "Degrees; positive turns clockwise on screen."
+            },
+            "cols": {
+              "$ref": "#/$defs/ColRange"
+            }
+          },
+          "additionalProperties": false
+        },
+        "circle": {
+          "type": "object",
+          "required": [
+            "center",
+            "radius",
+            "start",
+            "cols"
+          ],
+          "properties": {
+            "center": {
+              "$ref": "#/$defs/Point"
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "start": {
+              "type": "number",
+              "description": "Degrees on the canvas axes: 0 points right, 90 points down."
+            },
+            "cols": {
+              "$ref": "#/$defs/ColRange"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "RowMeta": {
       "type": "object",
       "title": "RowMeta",
-      "description": "A descriptive row registry entry (section 4.2). Not a container: seats live in Section.seats.",
-      "$comment": "A RowMeta that no seat references is an empty row and is valid (section 4.2.2); it reserves one row of vertical space in the section's row order. A validator MUST NOT reject it, in any layout mode.",
+      "description": "A descriptive row registry entry (section 4.2). Not a container: seats live in Section.seats and join a row only through Seat.row.",
+      "$comment": "A RowMeta that no seat references is valid and reserves no space (section 4.2.2). A validator MUST NOT reject it.",
       "required": [
         "id"
       ],
@@ -212,6 +392,9 @@
           "type": "integer",
           "description": "Ordering key among rows in the section, not a position (section 4.2.1)."
         },
+        "shape": {
+          "$ref": "#/$defs/RowShape"
+        },
         "metadata": {
           "type": "object"
         }
@@ -221,7 +404,7 @@
     "Direction": {
       "type": "object",
       "title": "Direction",
-      "description": "An optional, purely informational label pair for one addressing axis (section 4.10).",
+      "description": "An optional, purely informational label pair for one axis (section 4.10).",
       "$comment": "Non-normative: MUST NOT be used by a validator to reject a document, and MUST NOT be relied upon by a renderer to decide layout or screen placement (section 4.10).",
       "required": [
         "axis",
@@ -249,11 +432,13 @@
     "Seat": {
       "type": "object",
       "title": "Seat",
-      "description": "A bookable seat (section 4.3). Its position is a property of the seat, not a slot in a shared array.",
-      "$comment": "Referential integrity (section 4.6), not expressible in JSON Schema: Seat.type MUST resolve against KerusiMap.legend[].id; Seat.priceTier MUST resolve against KerusiMap.priceTiers[].id; Seat.row MUST resolve against Section.rows[].id when Section.rows is present (opaque free text otherwise); Seat.companions[] MUST resolve against other Seat.id values within the same section AND MUST be fully symmetric. A conformant validator MUST reject a document where any of these fails.",
+      "description": "A bookable seat (section 4.3). It is drawn at its x/y; row and col say only which seats are its neighbours.",
+      "$comment": "Not expressible in JSON Schema, and enforced by a custom validator: x MUST NOT exceed canvas.width nor y canvas.height (section 4.3.1); no two seats in a section share the same row and col (section 4.3.5); and referential integrity (section 4.6) - Seat.type MUST resolve against KerusiMap.legend[].id; Seat.priceTier against KerusiMap.priceTiers[].id; Seat.row against Section.rows[].id when Section.rows is present (opaque free text otherwise); Seat.companions[] against other Seat.id values within the same section, fully symmetric.",
       "required": [
         "id",
-        "type"
+        "type",
+        "x",
+        "y"
       ],
       "properties": {
         "id": {
@@ -267,27 +452,27 @@
         },
         "row": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "The seat's row. Membership is by this field alone, never by position (section 4.2.3)."
         },
         "col": {
           "type": "integer",
-          "description": "Grid column within the row."
+          "minimum": 1,
+          "description": "Adjacency ordinal within the row: seats in the same row whose cols differ by 1 are neighbours (section 4.3.5). Never places the seat."
         },
         "x": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100,
-          "description": "Percent of section width (see Section.aspectRatio)."
+          "description": "Centre of the seat's footprint, in canvas units, 0 to canvas.width (section 4.3.1)."
         },
         "y": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100,
-          "description": "Percent of section height."
+          "description": "Centre of the seat's footprint, in canvas units, 0 to canvas.height (section 4.3.1)."
         },
         "rotation": {
           "type": "number",
-          "description": "Degrees."
+          "description": "Degrees, clockwise on screen, about the seat's centre."
         },
         "type": {
           "type": "string",
@@ -326,36 +511,23 @@
           "type": "object"
         }
       },
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "title": "Positioning requirement (section 4.3.1)",
-          "description": "A Seat MUST specify col, or x and y, or both. A Seat MUST NOT specify neither.",
-          "$comment": "anyOf, not oneOf: 'or both' is explicitly permitted by section 4.3.1, and a oneOf over these overlapping branches would reject a seat carrying col, x and y - the shape section 4.5 REQUIRES of every seat in a 'mixed' section. The stricter per-mode rules are applied by the enclosing Section.",
-          "anyOf": [
-            {
-              "required": [
-                "col"
-              ]
-            },
-            {
-              "required": [
-                "x",
-                "y"
-              ]
-            }
-          ]
-        }
-      ]
+      "dependentRequired": {
+        "col": [
+          "row"
+        ]
+      },
+      "additionalProperties": false
     },
     "Element": {
       "type": "object",
       "title": "Element",
-      "description": "A non-bookable feature that still requires rendering: screen, stage, exit, lavatory, staircase, or a labelled gap (section 4.4).",
-      "$comment": "Element.row MUST resolve against Section.rows[].id when Section.rows is present (section 4.6). In a 'grid' section, an element's row span (height) MUST NOT extend past the last row in the section's row order (sections 4.2.1 and 4.6) - a bound a custom validator MUST check.",
+      "description": "A non-bookable feature that still requires rendering: screen, stage, exit, lavatory, staircase, or a labelled gap (section 4.4). Placed on the canvas exactly as a seat is.",
+      "$comment": "x MUST NOT exceed canvas.width nor y canvas.height (section 4.4.1); enforced by a custom validator.",
       "required": [
         "id",
-        "kind"
+        "kind",
+        "x",
+        "y"
       ],
       "properties": {
         "id": {
@@ -372,70 +544,40 @@
         "label": {
           "type": "string"
         },
-        "row": {
-          "type": "string",
-          "minLength": 1
-        },
-        "col": {
-          "type": "integer"
-        },
         "x": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100
+          "description": "Centre, in canvas units."
         },
         "y": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100
+          "description": "Centre, in canvas units."
         },
         "width": {
           "type": "number",
-          "description": "Grid: a column span in cells (positive integer, default 1). Freeform: a percentage of section width (section 4.4.1)."
+          "exclusiveMinimum": 0,
+          "description": "Canvas units. Default: the applicable seatSize (section 4.4.1)."
         },
         "height": {
           "type": "number",
-          "description": "Grid: a row span in cells (positive integer, default 1). Freeform: a percentage of section height (section 4.4.1)."
+          "exclusiveMinimum": 0,
+          "description": "Canvas units. Default: the applicable seatSize (section 4.4.1)."
         },
         "rotation": {
-          "type": "number"
+          "type": "number",
+          "description": "Degrees, clockwise on screen, about the element's centre."
         },
         "metadata": {
           "type": "object"
         }
       },
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "title": "Element positioning requirement (section 4.4.1)",
-          "description": "An Element MUST be positioned: by row and/or col, or by x and y.",
-          "$comment": "row alone is sufficient in a grid section - section 4.4.1 permits positioning 'by row and/or col', and a full-width screen omits col so that it spans the section's full column extent (see section 6.7). The stricter per-mode rules are applied by the enclosing Section.",
-          "anyOf": [
-            {
-              "required": [
-                "row"
-              ]
-            },
-            {
-              "required": [
-                "col"
-              ]
-            },
-            {
-              "required": [
-                "x",
-                "y"
-              ]
-            }
-          ]
-        }
-      ]
+      "additionalProperties": false
     },
     "Section": {
       "type": "object",
       "title": "Section",
-      "description": "A flat list of seats plus an optional row registry and elements (section 4.1).",
-      "$comment": "If layout is omitted, a validator MUST infer it from the section's seats (section 4.5): (1) every seat has col and no seat has x or y -> 'grid'; (2) every seat has both x and y and no seat has col -> 'freeform'; (3) any other combination is inconsistent and the document MUST be rejected. Inference never produces 'mixed', which MUST be declared explicitly. The allOf below enforces the three declared modes for seats and elements; the inference case and its rejection rule require a custom validator.",
+      "description": "A named zone on the map's canvas: a flat list of seats plus an optional row registry and elements (section 4.1). Not a canvas of its own.",
       "required": [
         "id",
         "seats"
@@ -455,26 +597,20 @@
           "description": "Ordering key among sections, not a position (section 4.1.1).",
           "$comment": "Section order (section 4.1.1): sections declaring index first, ascending; sections with no index after them in declaration order; ties keep declaration order. The same rule as RowMeta.index (section 4.2.1)."
         },
-        "layout": {
-          "enum": [
-            "grid",
-            "freeform",
-            "mixed"
-          ],
-          "description": "A strict, validated positioning constraint, not a rendering hint (section 4.5)."
+        "seatSize": {
+          "$ref": "#/$defs/SeatSize",
+          "description": "Overrides KerusiMap.seatSize for this section's seats and elements (section 4.5)."
         },
-        "aspectRatio": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*:[1-9][0-9]*$",
-          "description": "'width:height', e.g. '16:9'. Meaningful only for freeform/mixed sections. Default: '1:1'.",
-          "$comment": "Both dimensions must be non-zero: section 4.5 gives aspectRatio the job of fixing the canvas proportions that percentage coordinates, rotation and element sizing are measured against, and a zero width or height leaves all three undefined."
+        "bounds": {
+          "$ref": "#/$defs/Bounds",
+          "description": "The section's extent on the canvas, for zooming, thumbnails and legends. Does not affect drawing; the section's seats SHOULD lie inside it (section 4.1)."
         },
         "rows": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/RowMeta"
           },
-          "$comment": "When present, this is the section's complete, ordered row registry: every Seat.row and Element.row MUST resolve against it (sections 4.2 and 4.6)."
+          "$comment": "When present, this is the section's complete, ordered row registry: every Seat.row MUST resolve against it (sections 4.2 and 4.6)."
         },
         "directions": {
           "type": "array",
@@ -500,229 +636,7 @@
           "type": "object"
         }
       },
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "title": "Grid mode (sections 4.5 and 4.4.1)",
-          "description": "Every seat MUST have col and MUST NOT have x or y. Every element MUST be positioned by row and/or col, MUST NOT have x or y, and its width/height spans MUST be positive integers.",
-          "if": {
-            "required": [
-              "layout"
-            ],
-            "properties": {
-              "layout": {
-                "const": "grid"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "seats": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": [
-                    "col"
-                  ],
-                  "not": {
-                    "anyOf": [
-                      {
-                        "required": [
-                          "x"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "y"
-                        ]
-                      }
-                    ]
-                  }
-                }
-              },
-              "elements": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "anyOf": [
-                    {
-                      "required": [
-                        "row"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "col"
-                      ]
-                    }
-                  ],
-                  "not": {
-                    "anyOf": [
-                      {
-                        "required": [
-                          "x"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "y"
-                        ]
-                      }
-                    ]
-                  },
-                  "properties": {
-                    "width": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
-                    "height": {
-                      "type": "integer",
-                      "minimum": 1
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
-          "title": "Freeform mode (sections 4.5 and 4.4.1)",
-          "description": "Every seat MUST have both x and y and MUST NOT have col. Every element MUST have x and y and MUST NOT have col; it MAY still carry row as a label.",
-          "if": {
-            "required": [
-              "layout"
-            ],
-            "properties": {
-              "layout": {
-                "const": "freeform"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "seats": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": [
-                    "x",
-                    "y"
-                  ],
-                  "not": {
-                    "required": [
-                      "col"
-                    ]
-                  }
-                }
-              },
-              "elements": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": [
-                    "x",
-                    "y"
-                  ],
-                  "not": {
-                    "required": [
-                      "col"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        {
-          "title": "Mixed mode (sections 4.5 and 4.4.1)",
-          "description": "Every seat MUST have col AND both x and y. An element MAY use either addressing, or both; a grid-addressed element's width/height spans MUST still be positive integers.",
-          "if": {
-            "required": [
-              "layout"
-            ],
-            "properties": {
-              "layout": {
-                "const": "mixed"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "seats": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": [
-                    "col",
-                    "x",
-                    "y"
-                  ]
-                }
-              },
-              "elements": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "$comment": "'MAY use either' (section 4.4.1) means either of the two addressing schemes, so grid addressing here keeps its 'row and/or col' form - a row-only element, such as the full-width screen of section 6.7, is as valid in a mixed section as in a grid one.",
-                  "anyOf": [
-                    {
-                      "required": [
-                        "row"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "col"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "x",
-                        "y"
-                      ]
-                    }
-                  ],
-                  "allOf": [
-                    {
-                      "title": "Grid-addressed element spans (section 4.4.1)",
-                      "$comment": "width/height are interpreted 'according to that same mode' (section 4.4.1). An element carrying neither x nor y is grid-addressed, so its spans are cell counts and MUST be positive integers - the same rule the grid branch applies. Once x/y is present it governs visual placement (section 4.3.1) and the spans are percentages, so no integrality applies.",
-                      "if": {
-                        "not": {
-                          "anyOf": [
-                            {
-                              "required": [
-                                "x"
-                              ]
-                            },
-                            {
-                              "required": [
-                                "y"
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      "then": {
-                        "type": "object",
-                        "properties": {
-                          "width": {
-                            "type": "integer",
-                            "minimum": 1
-                          },
-                          "height": {
-                            "type": "integer",
-                            "minimum": 1
-                          }
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      ]
+      "additionalProperties": false
     }
   }
 }
