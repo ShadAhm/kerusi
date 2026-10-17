@@ -1,7 +1,7 @@
 /**
  * TypeScript interfaces for the Kerusi seat map and availability format,
- * v1.0.0-draft — a transcription of the declarations in sections 4 and 5 of
- * RFC/kerusi-standard_v1.0.0-draft.md.
+ * v1.0.0-draft, rev 15 — a transcription of the declarations in sections 4
+ * and 5 of RFC/kerusi-standard_v1.0.0-draft.md.
  *
  * Section 8 names `@kerusi/schema` (JSON Schema plus TypeScript types, no
  * runtime dependencies) as the package these belong in. Types are declarations

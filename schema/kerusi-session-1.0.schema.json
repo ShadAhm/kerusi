@@ -3,7 +3,7 @@
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-session-1.0.schema.json",
   "title": "Kerusi Session",
   "description": "A single event, showing, or departure bound to a reusable KerusiMap (Kerusi v1.0, RFC section 5.3).",
-  "version": "1.0.0-draft",
+  "version": "1.0.0-draft.15",
   "type": "object",
   "required": [
     "kerusi",

@@ -25,8 +25,12 @@ first and the semantic rules after it. See
 | [`semantic-rules.mjs`](semantic-rules.mjs) | The semantic rules alone. Dependency-free, per §8's `@kerusi/schema`. |
 | [`kerusi-1.0.d.ts`](kerusi-1.0.d.ts) | TypeScript interfaces transcribed from §4–§5. Declarations only; they enforce nothing at runtime. |
 
-Each schema carries a `version` member (`"1.0.0-draft"`) naming the spec
-revision it tracks. That is Kerusi metadata, not a JSON Schema keyword — see
+Each schema carries a `version` member (`"1.0.0-draft.15"`) naming the spec
+revision it tracks: `1.0.0-draft.<rev>`, where `<rev>` is the latest revision
+in the spec's §11 changelog, and the package version follows it. Documents
+themselves still declare `"kerusi": "1.0"` throughout the draft, so the schema
+version is how a tool says which draft revision it validates. That member is
+Kerusi metadata, not a JSON Schema keyword — see
 [Running under ajv](#running-under-ajv).
 
 ## Using them

@@ -5,6 +5,7 @@
 | | |
 |---|---|
 | Version | 1.0.0-draft |
+| Revision | 15 (§11) |
 | Status | Draft — open for comment |
 | Date | 2026-08-21 |
 | Editor | Shad |
@@ -1588,7 +1589,11 @@ semantics (resolved as intentionally delegated to the booking engine,
   `arc` and `circle` shapes.
 
   This is a breaking change: no rev 14 map is valid under rev 15 without
-  migration.
+  migration. Documents still declare `"kerusi": "1.0"`, as they have
+  through every draft revision, and will until 1.0 is final. Since the
+  document alone cannot say which draft revision it was written for, the
+  JSON Schemas published under §8 now carry the revision in their version,
+  as `1.0.0-draft.15`, so a tool can say which revision it validates.
 - **1.0.0-draft, rev 14** — Closed two gaps around sections.
 
   **Section order.** `Section.index` carried only an interface comment,

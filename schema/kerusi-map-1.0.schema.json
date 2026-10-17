@@ -3,7 +3,7 @@
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-map-1.0.schema.json",
   "title": "Kerusi Map",
   "description": "A reusable physical seating configuration: one canvas, a seat size, legend, price tiers, sections, seats, and non-bookable elements (Kerusi v1.0, RFC section 4).",
-  "version": "1.0.0-draft",
+  "version": "1.0.0-draft.15",
   "type": "object",
   "required": [
     "kerusi",
