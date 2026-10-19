@@ -1,6 +1,6 @@
 {
   "name": "kerusi-schema",
-  "version": "1.0.0-draft.15",
+  "version": "1.0.0-draft.16",
   "private": true,
   "description": "JSON Schemas and a conformance validator for the Kerusi seat map and availability format, plus TypeScript types, example documents and a test harness for them.",
   "license": "MIT",

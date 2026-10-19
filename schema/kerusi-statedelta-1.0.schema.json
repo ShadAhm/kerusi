@@ -3,7 +3,7 @@
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-statedelta-1.0.schema.json",
   "title": "Kerusi State Delta",
   "description": "Incremental seat status updates for a push transport such as WebSocket or SSE (Kerusi v1.0, RFC section 5.2).",
-  "version": "1.0.0-draft.15",
+  "version": "1.0.0-draft.16",
   "type": "object",
   "required": [
     "kerusi",

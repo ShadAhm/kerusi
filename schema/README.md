@@ -25,7 +25,7 @@ first and the semantic rules after it. See
 | [`semantic-rules.mjs`](semantic-rules.mjs) | The semantic rules alone. Dependency-free, per §8's `@kerusi/schema`. |
 | [`kerusi-1.0.d.ts`](kerusi-1.0.d.ts) | TypeScript interfaces transcribed from §4–§5. Declarations only; they enforce nothing at runtime. |
 
-Each schema carries a `version` member (`"1.0.0-draft.15"`) naming the spec
+Each schema carries a `version` member (`"1.0.0-draft.16"`) naming the spec
 revision it tracks: `1.0.0-draft.<rev>`, where `<rev>` is the latest revision
 in the spec's §11 changelog, and the package version follows it. Documents
 themselves still declare `"kerusi": "1.0"` throughout the draft, so the schema
@@ -140,6 +140,7 @@ Three settings matter:
   members, points as `[x, y]` pairs, a positive `radius`, and `cols` as two
   positive integers.
 - `Section.bounds` (§4.1) with a positive `width` and `height`.
+- Seat forms (§4.7.1): `SeatType.form` is a non-empty string.
 - `Money.amount` as an integer in minor units, and `Money.currency` as a
   three-letter uppercase ISO 4217 code (§4.8).
 - Enumerated values: `SeatStatus.status`, `Accessibility.transferArmrest`,
@@ -157,7 +158,7 @@ section that holds only elements — a stage or a screen with no seats of its ow
 
 ## Deliberate deviations
 
-Two places where a schema cannot be a neutral transcription of the spec. Each
+Three places where a schema cannot be a neutral transcription of the spec. Each
 is also recorded in a `$comment` at the point where it applies.
 
 - **`additionalProperties: false` is a producer-side gate.** §8 says
@@ -172,6 +173,16 @@ is also recorded in a `$comment` at the point where it applies.
   conformant document whose domain is not on the list. The seven suggested
   values are kept as `examples`. `Section.directions` (§4.10) is left
   unconstrained beyond its shape for the same reason.
+- **`SeatType.form` is a plain string, not an enum.** §4.7.1 registers nine
+  forms — `chair` (the default), `armchair`, `stool`, `recliner`, `beanbag`,
+  `cushion`, `wheelchair-space`, `sofa` and `bench` — and makes every other
+  value implementation-defined: a consumer that does not know one draws a
+  chair and MUST NOT reject the document. The registered values are kept as
+  `examples` and listed in the `$comment`. In
+  [`kerusi-1.0.d.ts`](kerusi-1.0.d.ts) the member is
+  `SeatForm | (string & {})`, so editors still autocomplete the registered
+  values. A form is a drawing hint and never affects price, adjacency or the
+  footprint, so the validator has no rule for it.
 
 ## What the validator enforces
 
@@ -233,14 +244,16 @@ registered extension.
   map in §6 of the spec; a cinema whose screen headroom and cross-aisle are
   just space on the canvas; a stadium stand exercising `directions`,
   locale-map labels, a row with no seats, a labelled gap and unpriced seats;
-  and a map with a stage-only section carrying no seats.
+  a map with a stage-only section carrying no seats; a lounge with every
+  registered seat form, including a three-place sofa and a four-place pew; and
+  a map whose only form is implementation-defined.
 - `examples/invalid/` — documents that MUST NOT validate: missing required
   members (`canvas`, `seatSize`, `legend`, a seat's or an element's `x`/`y`), a
   wrong `kerusi` version, a bare top-level vendor field, a zero-width canvas, a
   zero `seatSize`, a negative coordinate, a `col` of 0 and a `col` without a
   `row`, an element addressed by `row`/`col`, a zero-width element, row shapes
   with two kinds, an unknown kind or a missing member, the removed `layout` and
-  `aspectRatio` members, a lowercase currency, a fractional `Money.amount`, an
+  `aspectRatio` members, an empty seat `form`, a lowercase currency, a fractional `Money.amount`, an
   ISO 8601 timestamp that is not RFC 3339, and state/delta documents with both
   or neither of `sessionId`/`mapId`.
 - `examples/validator-only/` — documents that **pass** these schemas but that a
