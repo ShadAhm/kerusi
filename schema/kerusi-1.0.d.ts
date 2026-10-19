@@ -1,6 +1,6 @@
 /**
  * TypeScript interfaces for the Kerusi seat map and availability format,
- * v1.0.0-draft, rev 15 — a transcription of the declarations in sections 4
+ * v1.0.0-draft, rev 16 — a transcription of the declarations in sections 4
  * and 5 of RFC/kerusi-standard_v1.0.0-draft.md.
  *
  * Section 8 names `@kerusi/schema` (JSON Schema plus TypeScript types, no
@@ -175,7 +175,10 @@ export interface Seat {
   x: number;
   /** Centre of the footprint, in canvas units, 0 to `canvas.height`. */
   y: number;
-  /** Degrees, clockwise on screen, about the seat's centre. */
+  /**
+   * Degrees, clockwise on screen, about the seat's centre. At 0 the seat faces
+   * up the canvas, towards y = 0, with its back towards +y (section 4.3.1).
+   */
   rotation?: number;
   /** References a `SeatType.id` in the map's legend. */
   type: string;
@@ -232,6 +235,21 @@ export interface Element {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * The registered seat forms (section 4.7.1). `sofa` and `bench` are one place
+ * on a sofa or a pew, not the whole piece of furniture.
+ */
+export type SeatForm =
+  | 'chair'
+  | 'armchair'
+  | 'stool'
+  | 'recliner'
+  | 'beanbag'
+  | 'cushion'
+  | 'wheelchair-space'
+  | 'sofa'
+  | 'bench';
+
 /** A legend entry (section 4.7). */
 export interface SeatType {
   /** Unique within the legend (section 4.6). e.g. "standard" | "recliner" | "wheelchair" | "business". */
@@ -239,6 +257,13 @@ export interface SeatType {
   label?: LocalizableString;
   /** Suggested render color, hex. Non-normative hint. */
   color?: string;
+  /**
+   * What one place of this type looks like (section 4.7.1); `"chair"` when
+   * absent. A drawing hint: it never affects price, adjacency or the
+   * footprint. Any other non-empty string is implementation-defined and drawn
+   * as a chair by a consumer that does not know it.
+   */
+  form?: SeatForm | (string & {});
   /** References a `PriceTier.id` (section 4.9 step 3). */
   defaultPriceTier?: string;
 }

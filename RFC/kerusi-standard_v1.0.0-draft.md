@@ -5,9 +5,9 @@
 | | |
 |---|---|
 | Version | 1.0.0-draft |
-| Revision | 15 (§11) |
+| Revision | 16 (§11) |
 | Status | Draft — open for comment |
-| Date | 2026-08-21 |
+| Date | 2026-10-19 |
 | Editor | Shad |
 
 ---
@@ -399,7 +399,8 @@ interface Seat {
   x: number;                       // REQUIRED. Centre, in canvas units (§4.3.1).
   y: number;                       // REQUIRED. Centre, in canvas units.
   rotation?: number;               // Degrees, clockwise on screen, about the seat's
-                                     //   centre. Lets one seat tilt independently of
+                                     //   centre. At 0 the seat faces towards y = 0
+                                     //   (§4.3.1). Lets one seat tilt independently of
                                      //   its neighbours, for curved or staggered rows.
   type: string;                    // REQUIRED. References a SeatType.id in the map's legend.
   priceTier?: string;              // References a PriceTier.id.
@@ -425,6 +426,14 @@ applies to its section (§4.5), centred on `x`/`y` and turned by
 `rotation` degrees clockwise on screen about that centre. The footprint
 is the whole of a seat's geometry: two conformant renderers draw the same
 seat at the same place, at the same size, and at the same angle.
+
+A seat **faces** up the canvas at `rotation` 0: towards `y = 0`, with its
+back towards +`y`. `rotation` turns it clockwise on screen, so a seat at
+90 faces +`x`, and one at 180 faces down the canvas. A renderer that
+draws a seat with a front and a back — an armchair, a place on a sofa
+(§4.7.1) — MUST draw it facing this way, so that two renderers turn the
+same seat the same way round. Facing is part of drawing only: like the
+rest of the footprint, it never affects adjacency or price.
 
 Two seats whose footprints overlap are almost certainly a producer error,
 though not one that makes the document ambiguous. A validator SHOULD
@@ -681,9 +690,58 @@ interface SeatType {
                                      //   | "wheelchair" | "business".
   label?: string | Record<string, string>;
   color?: string;                  // Suggested render color, hex. Non-normative hint.
+  form?: string;                   // What one place of this type looks like (§4.7.1).
+                                     //   Defaults to "chair".
   defaultPriceTier?: string;
 }
 ```
+
+#### 4.7.1 Seat forms
+
+`SeatType.form` says what one place of the type looks like, so that a
+renderer can draw an armchair as an armchair and a customer can choose
+partly by how a seat looks. It is OPTIONAL; when it is absent, the form is
+`"chair"`. The registered values are:
+
+| `form` | What it is |
+|---|---|
+| `chair` | A standard chair. The default. |
+| `armchair` | A chair with arms, upholstered. |
+| `stool` | A seat with no back. |
+| `recliner` | A reclining chair. |
+| `beanbag` | A beanbag. |
+| `cushion` | Floor seating: a cushion or mat. |
+| `wheelchair-space` | A space for a wheelchair, with no chair in it. |
+| `sofa` | One place on a sofa, love seat or double chair. |
+| `bench` | One place on a bench or pew. |
+
+Any other value is implementation-defined. A consumer that does not
+recognise a `form` MUST draw the seat as a `chair`, and MUST NOT reject
+the document because of it. Later revisions may register more values;
+a producer SHOULD prefer a registered value where one fits.
+
+`form` is a drawing hint, in the same spirit as `color`. It MUST NOT
+affect a seat's price (§4.3.3, §4.9), its neighbours (§4.3.5), its
+footprint (§4.3.1), or the validity of anything else in the document.
+Every form is drawn inside the seat's square footprint, facing as §4.3.1
+defines: an armchair that needs more floor than a chair is given a larger
+`seatSize` on its section (§4.5), not a larger seat.
+
+`sofa` and `bench` describe **one place**, not the piece of furniture: a
+three-seat sofa is three seats whose type has the `sofa` form, a love seat
+or double chair is two, and a pew is as many `bench` places as people it
+holds. Each place is still one seat for one person, with its own `id`,
+state and price.
+
+A `wheelchair-space` form says how a space is drawn, not who can use it.
+A seat meant for a wheelchair user SHOULD still say so with
+`accessibility.wheelchairAccessible` (§4.3.4), which remains the
+machine-checkable source of truth.
+
+Because `form` sits on the type and not on the seat, every seat with the
+same legend entry looks the same, and the legend can always explain what
+a customer sees. Two looks sold at one price are two `SeatType`s that
+share a `defaultPriceTier`.
 
 ### 4.8 PriceTier and Money
 
@@ -977,7 +1035,8 @@ is simply absent — that is the aisle: nothing is drawn at `x: 126`, and
 ### 6.2 Cinema with a curved row and companion (couple) seats
 
 Row A is laid out on an arc, and records it as its shape; `companions`
-links two seats sold as a single unit.
+links two seats sold as a single unit, and the couple recliners' type
+draws each of them as one place on a sofa (§4.7.1).
 
 ```json
 {
@@ -989,7 +1048,7 @@ links two seats sold as a single unit.
   "seatSize": 40,
   "legend": [
     { "id": "standard", "label": "Standard", "defaultPriceTier": "regular" },
-    { "id": "recliner-couple", "label": "Couple Recliner", "defaultPriceTier": "premium" }
+    { "id": "recliner-couple", "label": "Couple Recliner", "form": "sofa", "defaultPriceTier": "premium" }
   ],
   "priceTiers": [
     { "id": "regular", "price": { "amount": 1500, "currency": "MYR" } },
@@ -1063,6 +1122,14 @@ radius 520 round `[500, -300]`, so that an editor can reopen the row as
 an arc. Each seat lies on its guide point (§4.2.3) — `A2`'s, for
 instance, is at 90°, straight below the centre. Rows A and L sit at
 `index` 0 and 11, which orders them and places nothing (§4.2.1).
+
+Every seat faces the screen at the top of the canvas, since a seat at
+`rotation` 0 faces towards `y = 0` (§4.3.1): `A1`, turned 10° clockwise,
+looks a little to the right, towards the screen's centre. `standard`
+declares no `form`, so its seats are drawn as chairs, and `L1` and `L2`
+are drawn as the two places of a love seat. The form changes nothing
+else: each is still one seat with its own price, and `companions` alone
+is what sells them together.
 
 ### 6.3 Flight with cabin classes and exit row
 
@@ -1223,8 +1290,8 @@ court's map has a 1600 × 900 canvas.
 ### 6.7 Rows, a round table, and a balcony
 
 A town hall with a stage, one straight row with a centre aisle, a round
-table, a wheelchair space, and a curved balcony. The two sections share
-the canvas (§4.5).
+table of stools, a wheelchair space, and a curved balcony of armchairs.
+The two sections share the canvas (§4.5).
 
 ```json
 {
@@ -1235,7 +1302,9 @@ the canvas (§4.5).
   "seatSize": 40,
   "legend": [
     { "id": "std", "label": "Standard", "defaultPriceTier": "regular" },
-    { "id": "wheelchair", "label": "Wheelchair space", "defaultPriceTier": "regular" }
+    { "id": "table", "label": "Table stool", "form": "stool", "defaultPriceTier": "regular" },
+    { "id": "wheelchair", "label": "Wheelchair space", "form": "wheelchair-space", "defaultPriceTier": "regular" },
+    { "id": "balcony", "label": "Balcony armchair", "form": "armchair", "defaultPriceTier": "regular" }
   ],
   "priceTiers": [{ "id": "regular", "price": { "amount": 2500, "currency": "MYR" } }],
   "sections": [
@@ -1270,7 +1339,7 @@ the canvas (§4.5).
           "col": 1,
           "x": 1300,
           "y": 230,
-          "type": "std",
+          "type": "table",
           "companions": ["T1-2", "T1-3", "T1-4"]
         },
         {
@@ -1279,7 +1348,7 @@ the canvas (§4.5).
           "col": 2,
           "x": 1370,
           "y": 300,
-          "type": "std",
+          "type": "table",
           "companions": ["T1-1", "T1-3", "T1-4"]
         },
         {
@@ -1288,7 +1357,7 @@ the canvas (§4.5).
           "col": 3,
           "x": 1300,
           "y": 370,
-          "type": "std",
+          "type": "table",
           "companions": ["T1-1", "T1-2", "T1-4"]
         },
         {
@@ -1297,10 +1366,10 @@ the canvas (§4.5).
           "col": 4,
           "x": 1230,
           "y": 300,
-          "type": "std",
+          "type": "table",
           "companions": ["T1-1", "T1-2", "T1-3"]
         },
-        { "id": "S1", "x": 1408, "y": 702, "type": "wheelchair" }
+        { "id": "S1", "x": 1408, "y": 702, "type": "wheelchair", "accessibility": { "wheelchairAccessible": true } }
       ]
     },
     {
@@ -1316,13 +1385,13 @@ the canvas (§4.5).
         }
       ],
       "seats": [
-        { "id": "L1", "row": "L", "col": 1, "x": 480, "y": 614, "type": "std" },
-        { "id": "L2", "row": "L", "col": 2, "x": 581, "y": 661, "type": "std" },
-        { "id": "L3", "row": "L", "col": 3, "x": 689, "y": 690, "type": "std" },
-        { "id": "L4", "row": "L", "col": 4, "x": 800, "y": 700, "type": "std" },
-        { "id": "L5", "row": "L", "col": 5, "x": 930, "y": 760, "type": "std" },
-        { "id": "L6", "row": "L", "col": 6, "x": 1019, "y": 661, "type": "std" },
-        { "id": "L7", "row": "L", "col": 7, "x": 1120, "y": 614, "type": "std" }
+        { "id": "L1", "row": "L", "col": 1, "x": 480, "y": 614, "type": "balcony" },
+        { "id": "L2", "row": "L", "col": 2, "x": 581, "y": 661, "type": "balcony" },
+        { "id": "L3", "row": "L", "col": 3, "x": 689, "y": 690, "type": "balcony" },
+        { "id": "L4", "row": "L", "col": 4, "x": 800, "y": 700, "type": "balcony" },
+        { "id": "L5", "row": "L", "col": 5, "x": 930, "y": 760, "type": "balcony" },
+        { "id": "L6", "row": "L", "col": 6, "x": 1019, "y": 661, "type": "balcony" },
+        { "id": "L7", "row": "L", "col": 7, "x": 1120, "y": 614, "type": "balcony" }
       ]
     }
   ]
@@ -1353,6 +1422,16 @@ fields, and none of them overrides another:
 balcony arc's centre, at 90°, because angles are measured on the canvas
 axes, with `y` pointing down.
 
+The legend gives four looks at one price (§4.7.1). Row A's `std` seats
+declare no `form` and are drawn as chairs; the table's are stools, `S1` is
+drawn as a space with no chair in it, and the balcony's are armchairs.
+Each look is its own `SeatType`, so the legend can name it, and all four
+share the `regular` tier. `S1`'s form says how it is drawn;
+`accessibility.wheelchairAccessible` is what says a wheelchair user can
+book it (§4.3.4). None of the seats has a `rotation`, so every one faces
+up the canvas, towards the stage (§4.3.1) — the stools round the table
+included, which have no back to show it.
+
 ---
 
 ## 7. Conformance
@@ -1381,6 +1460,8 @@ A consumer (renderer, validator, or intermediary) is conformant if it:
   with the footprint of §4.3.1, and never moves a seat because of its
   `row`, its `col`, or its row's shape (§4.2.3, §4.3.5);
 - derives adjacency only as §4.3.5 defines it;
+- draws a seat whose `form` it does not recognise as a `chair`, rather
+  than rejecting the document (§4.7.1);
 - orders a map's sections as defined by §4.1.1, and a section's rows as
   defined by §4.2.1;
 - applies the price-resolution order of §4.9; and
@@ -1501,6 +1582,49 @@ semantics (resolved as intentionally delegated to the booking engine,
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 16** — Added seat forms, and wrote down which way a
+  seat faces.
+
+  **Why.** A seat was a square footprint, and nothing in the document said
+  what stood on it. Venues sell armchairs, stools, recliners, beanbags,
+  floor cushions, wheelchair spaces with no chair, places on a sofa and
+  places on a pew, and a customer chooses partly by how a seat looks. Each
+  renderer could only guess from a type's `id` or `label`.
+
+  **What changed.** `SeatType` gains an OPTIONAL `form` (§4.7.1), a
+  drawing hint in the same spirit as `color`. Nine values are registered —
+  `chair` (the default when `form` is absent), `armchair`, `stool`,
+  `recliner`, `beanbag`, `cushion`, `wheelchair-space`, `sofa` and `bench`
+  — and any other value is implementation-defined: a consumer that does
+  not know it draws a `chair` and MUST NOT reject the document. `form`
+  never affects price, adjacency, the footprint or validity, and every
+  form is drawn inside the seat's square footprint, so an armchair that
+  needs more floor gets a larger section `seatSize`, not a larger seat.
+  `sofa` and `bench` are one place each: a three-seat sofa is three seats.
+  The piece of furniture they sit on is left to a later revision. §4.3.1
+  now states the facing convention: at `rotation` 0 a seat faces up the
+  canvas, towards `y = 0`, with its back towards +`y`, and `rotation`
+  turns it clockwise. A form with a back needs this so that two
+  renderers turn it the same way. §7 adds the fallback for an unknown
+  form to a consumer's obligations. §6.2's couple recliners are drawn as
+  `sofa` places, and §6.7 now has table stools, a wheelchair space and
+  balcony armchairs.
+
+  **Rejected.** *`Seat.form`*: it would allow a seat whose look the legend
+  cannot explain, and `type` is already the legend entry a customer reads
+  ("Armchair, MYR 45"); two looks at one price are two types sharing a
+  price tier. *An `attributes` tag*: attributes are non-exclusive facts,
+  and a seat has exactly one look. *An `enum`*: a closed list would make
+  every new piece of furniture a breaking change, so the schema lists the
+  registered values in a `$comment` and accepts any non-empty string.
+  *`standing`, `berth` and `bed`*: not registered yet, since no map needs
+  them; registering a value later breaks nothing.
+
+  **Compatibility.** Additive. A map without `form` draws as it did, and
+  the facing rule states what existing renderers already do: kerusiweb's
+  default seat outline, and the arcs and tables of the SeatMaps Easy
+  designer, already face `y = 0` at `rotation` 0. The schemas and package
+  are versioned `1.0.0-draft.16`.
 - **1.0.0-draft, rev 15** — Replaced the three positioning modes with one
   canvas. Every seat is positioned, rows say which seats are neighbours,
   and row shapes record a row's intended form for editors.

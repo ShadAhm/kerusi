@@ -17,6 +17,7 @@
     {
       "id": "recliner-couple",
       "label": "Couple Recliner",
+      "form": "sofa",
       "defaultPriceTier": "premium"
     }
   ],

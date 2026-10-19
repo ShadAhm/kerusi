@@ -3,7 +3,7 @@
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-state-1.0.schema.json",
   "title": "Kerusi State",
   "description": "A complete per-seat availability and hold snapshot for a session or map (Kerusi v1.0, RFC section 5.1).",
-  "version": "1.0.0-draft.15",
+  "version": "1.0.0-draft.16",
   "type": "object",
   "required": [
     "kerusi",
