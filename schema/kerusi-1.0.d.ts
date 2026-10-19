@@ -1,6 +1,6 @@
 /**
  * TypeScript interfaces for the Kerusi seat map and availability format,
- * v1.0.0-draft, rev 16 — a transcription of the declarations in sections 4
+ * v1.0.0-draft, rev 17 — a transcription of the declarations in sections 4
  * and 5 of RFC/kerusi-standard_v1.0.0-draft.md.
  *
  * Section 8 names `@kerusi/schema` (JSON Schema plus TypeScript types, no
@@ -50,6 +50,12 @@ export interface KerusiMap {
   legend: SeatType[];
   /** Named price tiers, referenced by id. */
   priceTiers?: PriceTier[];
+  /** How the whole venue may be booked (section 4.12). Default: "seats". */
+  booking?: BookingMode;
+  /** Venue hire: a literal whole price, over `wholePriceTier` (section 4.9.1). */
+  wholePrice?: Money;
+  /** References a `PriceTier.id`: the whole venue's price (section 4.9.1). */
+  wholePriceTier?: string;
   sections: Section[];
   metadata?: Record<string, unknown>;
 }
@@ -109,6 +115,14 @@ export interface Section {
   seats: Seat[];
   /** Non-bookable features: screens, stages, aisles, stairs. */
   elements?: Element[];
+  /** Pieces of furniture and sets of seats that belong together (section 4.11). */
+  groups?: Group[];
+  /** How this section — a room or zone — may be booked (section 4.12). Default: "seats". */
+  booking?: BookingMode;
+  /** Room hire: a literal whole price, over `wholePriceTier` (section 4.9.1). */
+  wholePrice?: Money;
+  /** References a `PriceTier.id`: the whole section's price (section 4.9.1). */
+  wholePriceTier?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -187,11 +201,10 @@ export interface Seat {
   /** Literal override; takes precedence over `priceTier` (section 4.9). */
   price?: Money;
   /**
-   * ids of other seats in the SAME section that must be booked together.
-   * References MUST be symmetric, and every member of a group larger than a
-   * pair MUST list every other member (section 4.6).
+   * Retired in rev 17 (section 4.12.4): seats booked together are a `Group`
+   * with `booking: "whole"`. A validator rejects a seat that carries it.
    */
-  companions?: string[];
+  companions?: never;
   /**
    * Free, non-exclusive tags: "aisle" | "window" | "extra-legroom" | … .
    * MUST NOT independently affect price (section 4.3.3).
@@ -208,7 +221,10 @@ export interface Accessibility {
   transferArmrest?: 'left' | 'right' | 'both' | 'fixed' | 'none';
   /** Reachable via aisle-chair transfer. */
   aisleChairCompatible?: boolean;
-  /** Occupant is expected to need an adjacent companion seat; pair with `Seat.companions`. */
+  /**
+   * Occupant is expected to need an adjacent companion seat. Link the actual
+   * companion seat with a group booked whole (sections 4.11 and 4.12).
+   */
   companionRequired?: boolean;
 }
 
@@ -234,6 +250,52 @@ export interface Element {
   rotation?: number;
   metadata?: Record<string, unknown>;
 }
+
+/**
+ * A named set of seats in one section that belong to one piece of furniture or
+ * one booking (section 4.11). Groups don't nest; a seat belongs to at most one.
+ */
+export interface Group {
+  /** Unique within the whole KerusiMap, across all sections (section 4.6). */
+  id: string;
+  /**
+   * What the group is. Informational: it chooses how the piece is drawn and how
+   * its seats are named, and MUST NOT affect price, validation or booking.
+   */
+  kind: GroupKind | (string & {});
+  /** e.g. "Table 3", "Pew 12". */
+  label?: LocalizableString;
+  /** Seat ids in this group's section. At least one, each once. */
+  seats: string[];
+  /** The piece's own footprint, drawn under its seats. */
+  shape?: GroupShape;
+  /** How this group may be booked (section 4.12). Default: "seats". */
+  booking?: BookingMode;
+  /** A table or sofa price: a literal whole price, over `wholePriceTier` (section 4.9.1). */
+  wholePrice?: Money;
+  /** References a `PriceTier.id`: the whole group's price (section 4.9.1). */
+  wholePriceTier?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** The registered group kinds (section 4.11). */
+export type GroupKind = 'table' | 'sofa' | 'loveseat' | 'pew' | 'bench' | 'booth' | 'box' | 'companion';
+
+/**
+ * Exactly one of `rect` or `circle`, in canvas units (section 4.11). A `rect`
+ * is centred on its x/y and turned by `rotation`, as an element is.
+ */
+export type GroupShape =
+  | { rect: { x: number; y: number; width: number; height: number; rotation?: number } }
+  | { circle: { center: Point; radius: number } };
+
+/**
+ * How a level — the map, a section, a group — may be booked (section 4.12).
+ * "seats": the level adds nothing. "whole": its seats are booked only all
+ * together. "either": as "seats", and the whole level is also offered as one
+ * booking.
+ */
+export type BookingMode = 'seats' | 'whole' | 'either';
 
 /**
  * The registered seat forms (section 4.7.1). `sofa` and `bench` are one place
@@ -349,6 +411,17 @@ export interface KerusiSession {
   /** RFC 3339 date-time — showtime / departure / event start. */
   startsAt?: string;
   endsAt?: string;
+  /**
+   * This event's booking-mode overrides (sections 4.12.1 and 5.3). Keys MUST
+   * name a section or group of the session's map.
+   */
+  bookingModes?: {
+    map?: BookingMode;
+    /** By `Section.id`. */
+    sections?: Record<string, BookingMode>;
+    /** By `Group.id`. */
+    groups?: Record<string, BookingMode>;
+  };
   metadata?: Record<string, unknown>;
 }
 

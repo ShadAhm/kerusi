@@ -10,6 +10,7 @@ import {
   areNeighbours,
   checkDeltaStream,
   checkMap,
+  checkSession,
   guidePoint,
   isOnGuide,
   lintMap,
@@ -310,44 +311,116 @@ const cases = [
     }
   },
 
-  // --- (4) companions ----------------------------------------------------
+  // --- (4) groups --------------------------------------------------------
   {
-    name: 'a symmetric companion pair is accepted',
-    run: () =>
-      unexpected(
-        checkMap(mapWith({ seats: [rowSeat('L1', 1, { companions: ['L2'] }), rowSeat('L2', 2, { companions: ['L1'] })] }))
-      )
-  },
-  {
-    name: 'a companion group of three MUST have every member list every other',
+    name: 'a group of seats in its own section, with a rect or a circle shape, is accepted',
     run: () => {
-      const seats = (companions) => [
-        rowSeat('A', 1, { companions: companions.A }),
-        rowSeat('B', 2, { companions: companions.B }),
-        rowSeat('C', 3, { companions: companions.C })
-      ];
-      const complete = checkMap(mapWith({ seats: seats({ A: ['B', 'C'], B: ['A', 'C'], C: ['A', 'B'] }) }));
-      // Pairwise symmetric, but A and C never list one another: a chain, not a group.
-      const chain = checkMap(mapWith({ seats: seats({ A: ['B'], B: ['A', 'C'], C: ['B'] }) }));
+      const seats = [rowSeat('A1', 1), rowSeat('A2', 2), rowSeat('A3', 3)];
+      const sofa = { id: 'g', kind: 'sofa', seats: ['A1', 'A2', 'A3'], shape: { rect: { x: 148, y: 100, width: 140, height: 48 } } };
+      const table = { id: 'g', kind: 'table', seats: ['A1', 'A2', 'A3'], shape: { circle: { center: [148, 140], radius: 30 } } };
       return [
-        complete.length === 0 ? null : `complete group rejected: ${complete.map((e) => e.rule).join(', ')}`,
-        chain.some((e) => e.rule === 'companion-group-incomplete') ? null : 'chained group accepted'
-      ].filter(Boolean);
+        ...unexpected(checkMap(mapWith({ seats, groups: [sofa] }))),
+        ...unexpected(lintMap(mapWith({ seats, groups: [sofa] }))),
+        ...unexpected(checkMap(mapWith({ seats, groups: [table] }))),
+        ...unexpected(lintMap(mapWith({ seats, groups: [table] })))
+      ];
     }
   },
   {
-    name: 'a companion in another section does not resolve',
+    name: 'a group with one seat, and a group with no shape, are valid',
+    run: () => unexpected(checkMap(mapWith({ seats: [rowSeat('A1', 1)], groups: [{ id: 'g', kind: 'table', seats: ['A1'] }] })))
+  },
+  {
+    name: 'a group seat in another section does not resolve',
     run: () => {
       const errors = checkMap({
         ...mapWith({ seats: [] }),
         sections: [
-          { id: 's1', seats: [looseSeat('A', 100, 100, { companions: ['B'] })] },
+          { id: 's1', seats: [looseSeat('A', 100, 100)], groups: [{ id: 'g', kind: 'loveseat', seats: ['A', 'B'] }] },
           { id: 's2', seats: [looseSeat('B', 140, 100)] }
         ]
       });
-      return errors.some((e) => e.rule === 'companion-unresolved' && e.path === '/sections/0/seats/0/companions/0')
+      return errors.length === 1 && errors[0].rule === 'group-seat-unresolved' && errors[0].path === '/sections/0/groups/0/seats/1'
         ? []
-        : [`expected companion-unresolved, got ${JSON.stringify(errors)}`];
+        : [`expected one group-seat-unresolved, got ${JSON.stringify(errors)}`];
+    }
+  },
+  {
+    name: 'a seat in two groups is rejected at the second listing',
+    run: () => {
+      const errors = checkMap(
+        mapWith({
+          seats: [rowSeat('A1', 1), rowSeat('A2', 2)],
+          groups: [
+            { id: 'g1', kind: 'sofa', seats: ['A1', 'A2'] },
+            { id: 'g2', kind: 'sofa', seats: ['A2'] }
+          ]
+        })
+      );
+      return errors.length === 1 && errors[0].rule === 'group-seat-shared' && errors[0].path === '/sections/0/groups/1/seats/0'
+        ? []
+        : [`expected one group-seat-shared, got ${JSON.stringify(errors)}`];
+    }
+  },
+  {
+    name: 'a group shape over a seat outside the group is a warning; over its own seats it is not',
+    run: () => {
+      const map = mapWith({
+        seats: [rowSeat('A1', 1), rowSeat('A2', 2), rowSeat('A3', 3)],
+        groups: [{ id: 'g', kind: 'loveseat', seats: ['A1', 'A2'], shape: { rect: { x: 124, y: 100, width: 120, height: 48 } } }]
+      });
+      const warnings = lintMap(map);
+      return [
+        ...unexpected(checkMap(map)),
+        warnings.length === 1 && warnings[0].rule === 'group-shape-overlaps-seat' && warnings[0].path === '/sections/0/groups/0/shape'
+          ? null
+          : `expected one group-shape-overlaps-seat, got ${JSON.stringify(warnings)}`
+      ].filter(Boolean);
+    }
+  },
+  {
+    name: 'a circle shape that only touches a seat outside the group does not overlap it',
+    run: () => {
+      // The seat's footprint spans x 80..120; a circle of radius 30 round x 150 reaches x 120.
+      const map = mapWith({
+        seats: [looseSeat('out', 100, 100), looseSeat('in', 300, 100)],
+        groups: [{ id: 'g', kind: 'table', seats: ['in'], shape: { circle: { center: [150, 100], radius: 30 } } }]
+      });
+      return unexpected(lintMap(map));
+    }
+  },
+  {
+    name: 'a leftover companions member is rejected, pointing at groups',
+    run: () => {
+      const errors = checkMap(mapWith({ seats: [rowSeat('L1', 1, { companions: ['L2'] }), rowSeat('L2', 2, { companions: ['L1'] })] }));
+      return errors.length === 2 && errors.every((e) => e.rule === 'companions-retired' && /group/.test(e.message))
+        ? []
+        : [`expected two companions-retired, got ${JSON.stringify(errors)}`];
+    }
+  },
+  {
+    name: 'a whole price may sit on the map, a section or a group, in the map\'s one currency',
+    run: () => {
+      const MYR = (amount) => ({ amount, currency: 'MYR' });
+      const map = mapWith(
+        { booking: 'either', wholePrice: MYR(9000), seats: [rowSeat('A1', 1)], groups: [{ id: 'g', kind: 'table', seats: ['A1'], wholePriceTier: 't' }] },
+        { booking: 'either', wholePrice: MYR(50000), priceTiers: [{ id: 't', price: MYR(1000) }] }
+      );
+      return unexpected(checkMap(map));
+    }
+  },
+  {
+    name: 'a session override must name a section or group of its map',
+    run: () => {
+      const map = mapWith({ seats: [rowSeat('A1', 1)], groups: [{ id: 'g', kind: 'table', seats: ['A1'] }] });
+      const ok = { kerusi: '1.0', id: 'e', mapId: 'case', bookingModes: { map: 'whole', sections: { s: 'either' }, groups: { g: 'whole' } } };
+      const bad = { kerusi: '1.0', id: 'e', mapId: 'other', bookingModes: { sections: { nope: 'whole' }, groups: { s: 'whole' } } };
+      const got = checkSession(bad, map).map((e) => `${e.rule} ${e.path}`);
+      const want = ['session-map-mismatch /mapId', 'session-booking-mode-unresolved /bookingModes/sections/nope', 'session-booking-mode-unresolved /bookingModes/groups/s'];
+      return [
+        ...unexpected(checkSession(ok, map)),
+        got.join(' | ') === want.join(' | ') ? null : `expected [${want.join(', ')}], got [${got.join(', ')}]`
+      ].filter(Boolean);
     }
   },
 

@@ -174,12 +174,7 @@
           "col": 1,
           "x": 1300,
           "y": 230,
-          "type": "table",
-          "companions": [
-            "T1-2",
-            "T1-3",
-            "T1-4"
-          ]
+          "type": "table"
         },
         {
           "id": "T1-2",
@@ -187,12 +182,7 @@
           "col": 2,
           "x": 1370,
           "y": 300,
-          "type": "table",
-          "companions": [
-            "T1-1",
-            "T1-3",
-            "T1-4"
-          ]
+          "type": "table"
         },
         {
           "id": "T1-3",
@@ -200,12 +190,7 @@
           "col": 3,
           "x": 1300,
           "y": 370,
-          "type": "table",
-          "companions": [
-            "T1-1",
-            "T1-2",
-            "T1-4"
-          ]
+          "type": "table"
         },
         {
           "id": "T1-4",
@@ -213,12 +198,7 @@
           "col": 4,
           "x": 1230,
           "y": 300,
-          "type": "table",
-          "companions": [
-            "T1-1",
-            "T1-2",
-            "T1-3"
-          ]
+          "type": "table"
         },
         {
           "id": "S1",
@@ -228,6 +208,29 @@
           "accessibility": {
             "wheelchairAccessible": true
           }
+        }
+      ],
+      "groups": [
+        {
+          "id": "T1",
+          "kind": "table",
+          "label": "Table 1",
+          "seats": [
+            "T1-1",
+            "T1-2",
+            "T1-3",
+            "T1-4"
+          ],
+          "shape": {
+            "circle": {
+              "center": [
+                1300,
+                300
+              ],
+              "radius": 45
+            }
+          },
+          "booking": "whole"
         }
       ]
     },
