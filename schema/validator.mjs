@@ -18,7 +18,12 @@
 //
 // Warnings are the conditions section 4 says a validator SHOULD report without
 // rejecting the document — overlapping seats, a seat outside its section's
-// bounds. They never affect `valid`.
+// bounds, a group's shape over a seat outside the group. They never affect
+// `valid`.
+//
+// A session's booking-mode overrides name sections and groups of another
+// document, its map, so `validate(session, 'session')` checks its shape only;
+// `checkSession(session, map)` checks it against the map.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -32,6 +37,7 @@ export {
   areNeighbours,
   checkDeltaStream,
   checkMap,
+  checkSession,
   guidePoint,
   isOnGuide,
   lintMap,

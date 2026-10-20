@@ -11,8 +11,13 @@
 // dangling seat type and mixed currencies reports both.
 //
 // `checkMap` returns what a conformant validator MUST reject. `lintMap` returns
-// what it SHOULD report without rejecting: overlapping seats (section 4.3.1)
-// and seats outside their section's bounds (section 4.1).
+// what it SHOULD report without rejecting: overlapping seats (section 4.3.1),
+// seats outside their section's bounds (section 4.1), and a group's shape over
+// a seat outside the group (section 4.11). `checkSession` checks a session
+// against the map it names (section 5.3), so it takes both documents.
+//
+// Booking units and selection prices (sections 4.9.1 and 4.12) are in
+// ./booking.mjs.
 
 /** @typedef {{ rule: string, spec: string, path: string, message: string }} KerusiError */
 
@@ -167,11 +172,36 @@ function checkSeatTypes(map, out) {
   });
 }
 
-// (2) Seat.priceTier and SeatType.defaultPriceTier resolve against
-//     KerusiMap.priceTiers[].id (sections 4.6 and 4.9). A map declaring no
-//     priceTiers resolves nothing, so any reference into it is dangling.
+/**
+ * The levels that can carry a whole price (section 4.9.1) — the map, each
+ * section, each group — with the path tokens of each and a phrase naming it.
+ */
+function priceLevels(map) {
+  const levels = [{ node: map, at: [], what: `map ${quote(map.id)}` }];
+  arr(map.sections).forEach((section, s) => {
+    levels.push({ node: section, at: ['sections', s], what: `section ${quote(section?.id)}` });
+    arr(section?.groups).forEach((group, g) => {
+      levels.push({ node: group, at: ['sections', s, 'groups', g], what: `group ${quote(group?.id)}` });
+    });
+  });
+  return levels;
+}
+
+// (2) Seat.priceTier, SeatType.defaultPriceTier, and the wholePriceTier of the
+//     map, a section or a group resolve against KerusiMap.priceTiers[].id
+//     (sections 4.6, 4.9 and 4.9.1). A map declaring no priceTiers resolves
+//     nothing, so any reference into it is dangling.
 function checkPriceTierRefs(map, out) {
   const known = new Set(arr(map.priceTiers).map((t) => t?.id));
+  for (const { node, at, what } of priceLevels(map)) {
+    if (!has(node, 'wholePriceTier') || known.has(node.wholePriceTier)) continue;
+    out.push({
+      rule: 'whole-price-tier-unresolved',
+      spec: '4.9.1',
+      path: ptr(...at, 'wholePriceTier'),
+      message: `${what} has whole price tier ${quote(node.wholePriceTier)}, which the map does not declare`
+    });
+  }
   arr(map.legend).forEach((type, j) => {
     if (!has(type, 'defaultPriceTier') || known.has(type.defaultPriceTier)) return;
     out.push({
@@ -213,94 +243,72 @@ function checkRowRefs(map, out) {
   });
 }
 
-// (4) Seat.companions[] resolve to other seats in the SAME section, and are
-//     fully symmetric: every member of a group lists every other (section 4.6).
-function checkCompanions(map, out) {
+// (4) Groups (section 4.11). Group.seats resolve against the seats of the
+//     group's own section; a seat belongs to at most one group, so a seat
+//     listed a second time — by another group, or again by the same one — is
+//     reported at the later listing. A group's shape is placed on the canvas
+//     by its centre, as an element is. And `Seat.companions`, retired in rev
+//     17, is rejected rather than ignored (section 4.12.4): ignored, a pair
+//     that was booked together would silently become two seats booked apart.
+function checkGroups(map, out) {
+  const { width, height } = isObject(map.canvas) ? map.canvas : {};
   arr(map.sections).forEach((section, s) => {
-    const seats = arr(section?.seats);
-    const byId = new Map();
-    seats.forEach((seat, i) => {
-      if (has(seat, 'id') && !byId.has(seat.id)) byId.set(seat.id, { seat, i });
-    });
+    const seatIds = new Set(arr(section?.seats).map((seat) => seat?.id));
+    const owner = new Map(); // seat id -> path of the first listing
+    arr(section?.groups).forEach((group, g) => {
+      arr(group?.seats).forEach((id, n) => {
+        const path = ptr('sections', s, 'groups', g, 'seats', n);
+        if (!seatIds.has(id)) {
+          out.push({
+            rule: 'group-seat-unresolved',
+            spec: '4.11',
+            path,
+            message: `group ${quote(group.id)} lists seat ${quote(id)}, which is not a seat in section ${quote(section.id)}`
+          });
+          return;
+        }
+        if (owner.has(id)) {
+          out.push({
+            rule: 'group-seat-shared',
+            spec: '4.11',
+            path,
+            message: `group ${quote(group.id)} lists seat ${quote(id)}, which is already listed at ${owner.get(id)}; a seat belongs to at most one group`
+          });
+          return;
+        }
+        owner.set(id, path);
+      });
 
-    // Declared edges, minus the ones that do not resolve: an unresolved
-    // companion is reported once, as a dangling reference, and not a second
-    // time as a broken symmetry.
-    const edges = new Map(); // seat id -> Set of companion ids
-    seats.forEach((seat, i) => {
-      if (!has(seat, 'id')) return;
-      const own = edges.get(seat.id) ?? new Set();
-      edges.set(seat.id, own);
-      arr(seat.companions).forEach((cid, n) => {
-        const path = ptr('sections', s, 'seats', i, 'companions', n);
-        if (cid === seat.id) {
-          out.push({
-            rule: 'companion-self-reference',
-            spec: '4.6',
-            path,
-            message: `seat ${quote(seat.id)} lists itself as a companion`
-          });
-          return;
-        }
-        if (!byId.has(cid)) {
-          out.push({
-            rule: 'companion-unresolved',
-            spec: '4.6',
-            path,
-            message: `seat ${quote(seat.id)} lists companion ${quote(cid)}, which is not a seat in section ${quote(section.id)}`
-          });
-          return;
-        }
-        own.add(cid);
+      const shape = group?.shape;
+      const centre = isObject(shape?.rect)
+        ? { x: shape.rect.x, y: shape.rect.y, at: ['rect'] }
+        : isObject(shape?.circle) && Array.isArray(shape.circle.center)
+          ? { x: shape.circle.center[0], y: shape.circle.center[1], at: ['circle', 'center'] }
+          : null;
+      if (!centre) return;
+      const outside = [];
+      if (isNum(width) && isNum(centre.x) && (centre.x < 0 || centre.x > width)) outside.push(`x ${centre.x} (0 to ${width})`);
+      if (isNum(height) && isNum(centre.y) && (centre.y < 0 || centre.y > height)) outside.push(`y ${centre.y} (0 to ${height})`);
+      if (outside.length === 0) return;
+      out.push({
+        rule: 'group-shape-outside-canvas',
+        spec: '4.11',
+        path: ptr('sections', s, 'groups', g, 'shape', ...centre.at),
+        message: `group ${quote(group.id)} has its shape's centre outside the canvas: ${outside.join(', ')}`
       });
     });
 
-    // Symmetry: if A lists B, B MUST list A in return.
-    for (const [id, companions] of edges) {
-      const entry = byId.get(id);
-      if (!entry) continue;
-      for (const cid of companions) {
-        if (edges.get(cid)?.has(id)) continue;
-        out.push({
-          rule: 'companion-asymmetric',
-          spec: '4.6',
-          path: ptr('sections', s, 'seats', entry.i, 'companions', arr(entry.seat.companions).indexOf(cid)),
-          message: `seat ${quote(id)} lists ${quote(cid)} as a companion, but ${quote(cid)} does not list ${quote(id)} in return`
-        });
-      }
-    }
-
-    // Group completeness: "for a group larger than a pair, every member MUST
-    // list every other member". A group is a connected component of the
-    // companion graph, and it MUST be complete.
-    const seen = new Set();
-    for (const id of edges.keys()) {
-      if (seen.has(id)) continue;
-      const group = [];
-      const queue = [id];
-      seen.add(id);
-      while (queue.length > 0) {
-        const cur = queue.shift();
-        group.push(cur);
-        for (const next of edges.get(cur) ?? []) {
-          if (seen.has(next)) continue;
-          seen.add(next);
-          queue.push(next);
-        }
-      }
-      if (group.length < 3) continue; // a pair is covered by the symmetry check
-      group.sort();
-      for (const member of group) {
-        const missing = group.filter((other) => other !== member && !edges.get(member).has(other));
-        if (missing.length === 0) continue;
-        out.push({
-          rule: 'companion-group-incomplete',
-          spec: '4.6',
-          path: ptr('sections', s, 'seats', byId.get(member).i, 'companions'),
-          message: `seat ${quote(member)} belongs to the companion group ${listing(group)} but does not list ${listing(missing)}`
-        });
-      }
-    }
+    arr(section?.seats).forEach((seat, i) => {
+      if (!has(seat, 'companions')) return;
+      out.push({
+        rule: 'companions-retired',
+        spec: '4.12.4',
+        path: ptr('sections', s, 'seats', i, 'companions'),
+        message:
+          `seat ${quote(seat.id)} carries companions, which rev 17 retired; ` +
+          'put the seats in one group with booking "whole" instead (section 4.11)'
+      });
+    });
   });
 }
 
@@ -376,7 +384,9 @@ function checkRowShapes(map, out) {
   });
 }
 
-// (8a) Exactly one currency applies to the whole map (section 4.9).
+// (8a) Exactly one currency applies to the whole map (section 4.9), whole
+//      prices included (section 4.9.1). Monies are compared in the order they
+//      are gathered: price tiers, seat prices, then whole prices.
 function checkSingleCurrency(map, out) {
   const monies = [];
   arr(map.priceTiers).forEach((tier, j) => {
@@ -389,6 +399,9 @@ function checkSingleCurrency(map, out) {
       }
     });
   });
+  for (const { node, at } of priceLevels(map)) {
+    if (isObject(node?.wholePrice)) monies.push({ money: node.wholePrice, path: ptr(...at, 'wholePrice', 'currency') });
+  }
   const first = monies.find(({ money }) => has(money, 'currency'));
   if (!first) return;
   for (const { money, path } of monies) {
@@ -406,8 +419,8 @@ function checkSingleCurrency(map, out) {
 
 // (8b) Identifier uniqueness (sections 4.3 and 4.6). Each kind of id is its
 //      own namespace, unique within the scope the spec gives it: the whole map
-//      for seats, sections, elements, seat types and price tiers; its own
-//      section for rows. `groups` is one scope's worth of collections, each
+//      for seats, sections, elements, groups, seat types and price tiers; its
+//      own section for rows. `groups` is one scope's worth of collections, each
 //      paired with the path tokens of the array it came from.
 function reportDuplicateIds(groups, { rule, spec, kind, scope }, out) {
   const first = new Map();
@@ -448,6 +461,11 @@ function checkIdUniqueness(map, out) {
     { rule: 'element-id-duplicate', spec: '4.6', kind: 'element', scope: 'Element.id is unique across the whole map' },
     out
   );
+  reportDuplicateIds(
+    perSection('groups'),
+    { rule: 'group-id-duplicate', spec: '4.6', kind: 'group', scope: 'Group.id is unique across the whole map' },
+    out
+  );
   // Rows are section-scoped, as row references are, so each section is a
   // scope of its own.
   for (const group of perSection('rows')) {
@@ -485,7 +503,7 @@ export function checkMap(map) {
   checkSeatTypes(map, errors);
   checkPriceTierRefs(map, errors);
   checkRowRefs(map, errors);
-  checkCompanions(map, errors);
+  checkGroups(map, errors);
   checkCanvasBounds(map, errors);
   checkRowColUniqueness(map, errors);
   checkRowShapes(map, errors);
@@ -497,26 +515,49 @@ export function checkMap(map) {
 // --- warnings --------------------------------------------------------------
 
 /**
- * A seat's footprint (section 4.5): a square of side `size` centred on its
+ * A turned rectangle: centre, half-width, half-height, and angle in radians.
+ * A seat's footprint (section 4.5) is a square of side `size` centred on its
  * x/y, turned by its rotation.
  */
-const footprint = (seat, size) => ({ x: seat.x, y: seat.y, size, theta: rad(isNum(seat.rotation) ? seat.rotation : 0) });
+const footprint = (seat, size) => ({
+  x: seat.x,
+  y: seat.y,
+  size,
+  hw: size / 2,
+  hh: size / 2,
+  theta: rad(isNum(seat.rotation) ? seat.rotation : 0)
+});
 
 /**
- * Whether two footprints overlap, by the separating axis theorem over the edge
- * normals of both squares. Footprints that only touch — neighbouring seats
+ * Whether two turned rectangles overlap, by the separating axis theorem over
+ * the edge normals of both. Rectangles that only touch — neighbouring seats
  * placed exactly one seat size apart — do not overlap.
  */
-function footprintsOverlap(p, q) {
+function rectsOverlap(p, q) {
   const dx = q.x - p.x;
   const dy = q.y - p.y;
-  const tolerance = 1e-9 * Math.max(p.size, q.size);
+  const tolerance = 1e-9 * Math.max(p.hw, p.hh, q.hw, q.hh);
   for (const axis of [p.theta, p.theta + Math.PI / 2, q.theta, q.theta + Math.PI / 2]) {
-    const reach = (f) => (f.size / 2) * (Math.abs(Math.cos(f.theta - axis)) + Math.abs(Math.sin(f.theta - axis)));
+    const reach = (f) => f.hw * Math.abs(Math.cos(f.theta - axis)) + f.hh * Math.abs(Math.sin(f.theta - axis));
     const gap = Math.abs(dx * Math.cos(axis) + dy * Math.sin(axis));
     if (gap >= reach(p) + reach(q) - tolerance) return false;
   }
   return true;
+}
+
+/**
+ * Whether a circle overlaps a turned rectangle: the rectangle's nearest point
+ * to the circle's centre lies strictly inside the circle. Touching is not
+ * overlapping.
+ */
+function circleOverlapsRect(c, f) {
+  const dx = c.x - f.x;
+  const dy = c.y - f.y;
+  const lx = dx * Math.cos(-f.theta) - dy * Math.sin(-f.theta);
+  const ly = dx * Math.sin(-f.theta) + dy * Math.cos(-f.theta);
+  const nx = Math.max(-f.hw, Math.min(f.hw, lx));
+  const ny = Math.max(-f.hh, Math.min(f.hh, ly));
+  return Math.hypot(lx - nx, ly - ny) < c.radius - 1e-9 * Math.max(c.radius, f.hw, f.hh);
 }
 
 // (W1) A validator SHOULD report seats whose footprints overlap (section
@@ -542,7 +583,7 @@ function lintSeatOverlap(map, out) {
       const p = placed[k];
       const reach = (p.f.size + q.f.size) * Math.SQRT1_2;
       if (q.f.x - p.f.x > reach) break;
-      if (Math.abs(q.f.y - p.f.y) > reach || !footprintsOverlap(p.f, q.f)) continue;
+      if (Math.abs(q.f.y - p.f.y) > reach || !rectsOverlap(p.f, q.f)) continue;
       const [first, second] = p.order < q.order ? [p, q] : [q, p];
       reported.push({
         order: second.order,
@@ -579,10 +620,52 @@ function lintSectionBounds(map, out) {
   });
 }
 
+// (W3) A validator SHOULD report a group shape that overlaps a seat outside
+//      the group (section 4.11). A seat may overlap its own group's shape — a
+//      chair at a table's edge, a place on a sofa — and that is not reported.
+//      Every section shares the one canvas, so a seat in another section can
+//      be under a group's shape too.
+function lintGroupShapes(map, out) {
+  const seats = [];
+  arr(map.sections).forEach((section) => {
+    const size = seatSizeOf(map, section);
+    if (!isNum(size) || size <= 0) return;
+    arr(section?.seats).forEach((seat) => {
+      if (isNum(seat?.x) && isNum(seat?.y)) seats.push({ seat, f: footprint(seat, size) });
+    });
+  });
+  arr(map.sections).forEach((section, s) => {
+    arr(section?.groups).forEach((group, g) => {
+      const own = new Set(arr(group?.seats));
+      const { rect, circle } = isObject(group?.shape) ? group.shape : {};
+      let overlaps;
+      if (isObject(rect) && [rect.x, rect.y, rect.width, rect.height].every(isNum)) {
+        const r = { x: rect.x, y: rect.y, hw: rect.width / 2, hh: rect.height / 2, theta: rad(isNum(rect.rotation) ? rect.rotation : 0) };
+        overlaps = (f) => rectsOverlap(r, f);
+      } else if (isObject(circle) && Array.isArray(circle.center) && circle.center.every(isNum) && isNum(circle.radius)) {
+        const c = { x: circle.center[0], y: circle.center[1], radius: circle.radius };
+        overlaps = (f) => circleOverlapsRect(c, f);
+      } else {
+        return;
+      }
+      for (const { seat, f } of seats) {
+        if (own.has(seat.id) || !overlaps(f)) continue;
+        out.push({
+          rule: 'group-shape-overlaps-seat',
+          spec: '4.11',
+          path: ptr('sections', s, 'groups', g, 'shape'),
+          message: `the shape of group ${quote(group.id)} overlaps seat ${quote(seat.id)}, which is not in the group`
+        });
+      }
+    });
+  });
+}
+
 /**
  * The section 4 conditions a validator SHOULD report but MUST NOT reject a
- * document for: overlapping seat footprints, and seats outside their section's
- * bounds. Same shape as `checkMap`'s errors.
+ * document for: overlapping seat footprints, seats outside their section's
+ * bounds, and a group's shape over a seat outside the group. Same shape as
+ * `checkMap`'s errors.
  *
  * @param {unknown} map a KerusiMap document
  * @returns {KerusiError[]}
@@ -593,7 +676,54 @@ export function lintMap(map) {
   if (!isObject(map)) return warnings;
   lintSeatOverlap(map, warnings);
   lintSectionBounds(map, warnings);
+  lintGroupShapes(map, warnings);
   return warnings;
+}
+
+/**
+ * A KerusiSession against the map it names (section 5.3). It needs both
+ * documents, so the validator's one-document `validate` cannot run it: the
+ * session's `mapId` MUST be the map's `id`, and every key of
+ * `bookingModes.sections` and `bookingModes.groups` MUST name a section or a
+ * group of that map (section 4.12.2). A key that named nothing would change
+ * no booking unit, and an event's "every table sold whole" would quietly not
+ * happen.
+ *
+ * @param {unknown} session a KerusiSession document
+ * @param {unknown} map the KerusiMap it names
+ * @returns {KerusiError[]}
+ */
+export function checkSession(session, map) {
+  /** @type {KerusiError[]} */
+  const errors = [];
+  if (!isObject(session) || !isObject(map)) return errors;
+  if (has(session, 'mapId') && session.mapId !== map.id) {
+    errors.push({
+      rule: 'session-map-mismatch',
+      spec: '5.3',
+      path: ptr('mapId'),
+      message: `session ${quote(session.id)} names map ${quote(session.mapId)}, not ${quote(map.id)}`
+    });
+  }
+  const sections = new Set(arr(map.sections).map((section) => section?.id));
+  const groups = new Set(arr(map.sections).flatMap((section) => arr(section?.groups).map((group) => group?.id)));
+  const modes = isObject(session.bookingModes) ? session.bookingModes : {};
+  for (const [key, known, kind] of [
+    ['sections', sections, 'section'],
+    ['groups', groups, 'group']
+  ]) {
+    if (!isObject(modes[key])) continue;
+    for (const id of Object.keys(modes[key])) {
+      if (known.has(id)) continue;
+      errors.push({
+        rule: 'session-booking-mode-unresolved',
+        spec: '4.12.2',
+        path: ptr('bookingModes', key, id),
+        message: `session ${quote(session.id)} sets the booking mode of ${kind} ${quote(id)}, which map ${quote(map.id)} does not declare`
+      });
+    }
+  }
+  return errors;
 }
 
 /**

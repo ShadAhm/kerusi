@@ -3,7 +3,7 @@
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-map-1.0.schema.json",
   "title": "Kerusi Map",
   "description": "A reusable physical seating configuration: one canvas, a seat size, legend, price tiers, sections, seats, and non-bookable elements (Kerusi v1.0, RFC section 4).",
-  "version": "1.0.0-draft.16",
+  "version": "1.0.0-draft.17",
   "type": "object",
   "required": [
     "kerusi",
@@ -70,6 +70,20 @@
       },
       "$comment": "Section 4.9: a KerusiMap MUST NOT mix currencies across seats; exactly one currency value applies to the whole map. Cross-checking every PriceTier.price.currency and Seat.price.currency for equality is beyond JSON Schema and MUST be enforced by a custom validator."
     },
+    "booking": {
+      "$ref": "#/$defs/BookingMode",
+      "description": "How the whole venue may be booked (section 4.12). Default: seats. A KerusiSession may override it for one event."
+    },
+    "wholePrice": {
+      "$ref": "#/$defs/Money",
+      "description": "The whole price of the whole venue (venue hire): a literal that takes precedence over wholePriceTier (section 4.9.1). Applies only while the effective booking mode is whole or either."
+    },
+    "wholePriceTier": {
+      "type": "string",
+      "minLength": 1,
+      "description": "References a PriceTier.id: the whole price of the whole venue (section 4.9.1).",
+      "$comment": "MUST resolve against KerusiMap.priceTiers[].id (section 4.6). Cross-collection reference; enforce with a custom validator."
+    },
     "sections": {
       "type": "array",
       "items": {
@@ -81,7 +95,7 @@
     }
   },
   "additionalProperties": false,
-  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), positions within the canvas (section 4.3.1), row/col uniqueness (section 4.3.5), row shape column ranges (section 4.2.3), companions symmetry (section 4.6), identifier uniqueness (sections 4.3 and 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema: schema/validator.mjs runs this schema and then those rules. See schema/README.md.",
+  "$comment": "This schema enforces the structural rules of section 4 that JSON Schema can express. Referential integrity (section 4.6), positions within the canvas (section 4.3.1), row/col uniqueness (section 4.3.5), row shape column ranges (section 4.2.3), group seat references and membership (section 4.11), whole price tier references (section 4.9.1), identifier uniqueness (sections 4.3 and 4.6), and single-currency consistency (section 4.9) require a custom validator in addition to this schema: schema/validator.mjs runs this schema and then those rules. See schema/README.md.",
   "$defs": {
     "LocalizableString": {
       "description": "A plain string, or a locale map such as { \"en\": \"Orchestra\", \"ms\": \"Orkestra\" }.",
@@ -203,6 +217,15 @@
       },
       "additionalProperties": false
     },
+    "BookingMode": {
+      "enum": [
+        "seats",
+        "whole",
+        "either"
+      ],
+      "title": "BookingMode",
+      "description": "seats: the level adds nothing, and its seats are booked as the levels inside it say. whole: the level's seats can be booked only all together. either: as seats, and the whole level is also offered as one booking (section 4.12)."
+    },
     "SeatType": {
       "type": "object",
       "title": "SeatType",
@@ -229,7 +252,17 @@
           "type": "string",
           "minLength": 1,
           "description": "What one place of this type looks like (section 4.7.1). A drawing hint; \"chair\" when absent.",
-          "examples": ["chair", "armchair", "stool", "recliner", "beanbag", "cushion", "wheelchair-space", "sofa", "bench"],
+          "examples": [
+            "chair",
+            "armchair",
+            "stool",
+            "recliner",
+            "beanbag",
+            "cushion",
+            "wheelchair-space",
+            "sofa",
+            "bench"
+          ],
           "$comment": "Registered values (section 4.7.1): chair (the default), armchair, stool, recliner, beanbag, cushion, wheelchair-space, sofa, bench. Deliberately not an enum: any other value is implementation-defined and valid, and a consumer that does not recognise one draws a chair and MUST NOT reject the document. A form never affects price, adjacency, the footprint or validity."
         },
         "defaultPriceTier": {
@@ -285,7 +318,8 @@
           "type": "boolean"
         },
         "companionRequired": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Occupant is expected to need an adjacent companion seat. Link the actual companion seat with a group booked whole (sections 4.11 and 4.12)."
         }
       },
       "additionalProperties": false
@@ -440,7 +474,7 @@
       "type": "object",
       "title": "Seat",
       "description": "A bookable seat (section 4.3). It is drawn at its x/y; row and col say only which seats are its neighbours.",
-      "$comment": "Not expressible in JSON Schema, and enforced by a custom validator: x MUST NOT exceed canvas.width nor y canvas.height (section 4.3.1); no two seats in a section share the same row and col (section 4.3.5); and referential integrity (section 4.6) - Seat.type MUST resolve against KerusiMap.legend[].id; Seat.priceTier against KerusiMap.priceTiers[].id; Seat.row against Section.rows[].id when Section.rows is present (opaque free text otherwise); Seat.companions[] against other Seat.id values within the same section, fully symmetric.",
+      "$comment": "Not expressible in JSON Schema, and enforced by a custom validator: x MUST NOT exceed canvas.width nor y canvas.height (section 4.3.1); no two seats in a section share the same row and col (section 4.3.5); and referential integrity (section 4.6) - Seat.type MUST resolve against KerusiMap.legend[].id; Seat.priceTier against KerusiMap.priceTiers[].id; Seat.row against Section.rows[].id when Section.rows is present (opaque free text otherwise). Seat.companions was retired in rev 17 (section 4.12.4): additionalProperties rejects it here, and the validator rejects it with a pointer to groups.",
       "required": [
         "id",
         "type",
@@ -493,14 +527,6 @@
         "price": {
           "$ref": "#/$defs/Money",
           "description": "Literal override; takes precedence over priceTier (section 4.9)."
-        },
-        "companions": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "uniqueItems": true
         },
         "attributes": {
           "type": "array",
@@ -581,6 +607,135 @@
       },
       "additionalProperties": false
     },
+    "GroupShape": {
+      "type": "object",
+      "title": "GroupShape",
+      "description": "Exactly one of rect or circle: the piece's own footprint, in canvas units, drawn under its seats (section 4.11).",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "rect": {
+          "type": "object",
+          "description": "Centred on x/y and turned by rotation, as an element is (section 4.4.1).",
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": 0
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "rotation": {
+              "type": "number",
+              "description": "Degrees, clockwise on screen, about the centre."
+            }
+          },
+          "additionalProperties": false
+        },
+        "circle": {
+          "type": "object",
+          "required": [
+            "center",
+            "radius"
+          ],
+          "properties": {
+            "center": {
+              "$ref": "#/$defs/Point"
+            },
+            "radius": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "The shape's centre MUST lie on the canvas (section 4.11); the upper bound depends on the document, so a custom validator checks it."
+    },
+    "Group": {
+      "type": "object",
+      "title": "Group",
+      "description": "A named set of seats in one section that belong to one piece of furniture or one booking: a table, a sofa, a love seat, a pew, a booth (section 4.11).",
+      "$comment": "Not expressible in JSON Schema, and enforced by a custom validator: every Group.seats entry MUST resolve against a Seat.id of the same section; a seat belongs to at most one group; Group.id is unique across the whole map (section 4.6); wholePriceTier MUST resolve (section 4.9.1); wholePrice shares the map's one currency (section 4.9).",
+      "required": [
+        "id",
+        "kind",
+        "seats"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique within the KerusiMap, across all sections (section 4.6)."
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the group is. Informational: it chooses how the piece is drawn and how its seats are named, and MUST NOT affect price, validation or booking (section 4.11).",
+          "examples": [
+            "table",
+            "sofa",
+            "loveseat",
+            "pew",
+            "bench",
+            "booth",
+            "box",
+            "companion"
+          ],
+          "$comment": "Registered kinds (section 4.11): table, sofa, loveseat, pew, bench, booth, box, companion. Deliberately not an enum, as for Element.kind: any other value is implementation-defined, and a consumer that does not know it draws the shape plainly."
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizableString"
+        },
+        "seats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Seat ids in this group's section. At least one."
+        },
+        "shape": {
+          "$ref": "#/$defs/GroupShape"
+        },
+        "booking": {
+          "$ref": "#/$defs/BookingMode",
+          "description": "How this group may be booked (section 4.12). Default: seats. A KerusiSession may override it for one event."
+        },
+        "wholePrice": {
+          "$ref": "#/$defs/Money",
+          "description": "The whole price of this group (a table or sofa price): a literal that takes precedence over wholePriceTier (section 4.9.1). Applies only while the effective booking mode is whole or either."
+        },
+        "wholePriceTier": {
+          "type": "string",
+          "minLength": 1,
+          "description": "References a PriceTier.id: the whole price of this group (section 4.9.1).",
+          "$comment": "MUST resolve against KerusiMap.priceTiers[].id (section 4.6). Cross-collection reference; enforce with a custom validator."
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
     "Section": {
       "type": "object",
       "title": "Section",
@@ -638,6 +793,27 @@
           "items": {
             "$ref": "#/$defs/Element"
           }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Group"
+          },
+          "description": "Pieces of furniture and sets of seats that belong together: tables, sofas, pews, booths (section 4.11)."
+        },
+        "booking": {
+          "$ref": "#/$defs/BookingMode",
+          "description": "How this section (a room or zone) may be booked (section 4.12). Default: seats. A KerusiSession may override it for one event."
+        },
+        "wholePrice": {
+          "$ref": "#/$defs/Money",
+          "description": "The whole price of this section (room hire): a literal that takes precedence over wholePriceTier (section 4.9.1). Applies only while the effective booking mode is whole or either."
+        },
+        "wholePriceTier": {
+          "type": "string",
+          "minLength": 1,
+          "description": "References a PriceTier.id: the whole price of this section (section 4.9.1).",
+          "$comment": "MUST resolve against KerusiMap.priceTiers[].id (section 4.6). Cross-collection reference; enforce with a custom validator."
         },
         "metadata": {
           "type": "object"

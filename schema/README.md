@@ -23,9 +23,10 @@ first and the semantic rules after it. See
 |---|---|
 | [`validator.mjs`](validator.mjs) | The validator: schemas (via ajv) then semantic rules. Its only dependency is ajv. |
 | [`semantic-rules.mjs`](semantic-rules.mjs) | The semantic rules alone. Dependency-free, per §8's `@kerusi/schema`. |
+| [`booking.mjs`](booking.mjs) | Booking units, selections and selection prices (§4.9.1, §4.12): the reference implementation the [booking-units corpus](../examples/booking-units) is checked against. Dependency-free. |
 | [`kerusi-1.0.d.ts`](kerusi-1.0.d.ts) | TypeScript interfaces transcribed from §4–§5. Declarations only; they enforce nothing at runtime. |
 
-Each schema carries a `version` member (`"1.0.0-draft.16"`) naming the spec
+Each schema carries a `version` member (`"1.0.0-draft.17"`) naming the spec
 revision it tracks: `1.0.0-draft.<rev>`, where `<rev>` is the latest revision
 in the spec's §11 changelog, and the package version follows it. Documents
 themselves still declare `"kerusi": "1.0"` throughout the draft, so the schema
@@ -85,8 +86,9 @@ everything it can see:
 ```
 
 `warnings` holds what §4 says a validator SHOULD report but MUST NOT reject a
-document for — seats whose footprints overlap (§4.3.1), and seats outside their
-section's `bounds` (§4.1). They have the same shape as errors and never affect
+document for — seats whose footprints overlap (§4.3.1), seats outside their
+section's `bounds` (§4.1), and a group's shape over a seat outside the group
+(§4.11). They have the same shape as errors and never affect
 `valid`. State, session and delta documents have none.
 
 `updatedAt` monotonicity (§5.2) is a property of a stream rather than of one
@@ -99,6 +101,7 @@ const { valid, errors } = kerusi.validateDeltaStream(deltasInReceiptOrder);
 
 [`semantic-rules.mjs`](semantic-rules.mjs) exports the same rules with no
 dependency on ajv — `checkMap`, `lintMap` (the warnings), `checkDeltaStream`,
+`checkSession` (a session against its map),
 and the helpers a renderer or editor needs anyway: `sectionOrder` (§4.1.1),
 `rowOrder` (§4.2.1), `seatSizeOf` (§4.5), `areNeighbours` (§4.3.5), and
 `guidePoint` and `isOnGuide` (§4.2.3) — for a consumer that validates against
@@ -141,6 +144,15 @@ Three settings matter:
   positive integers.
 - `Section.bounds` (§4.1) with a positive `width` and `height`.
 - Seat forms (§4.7.1): `SeatType.form` is a non-empty string.
+- Groups (§4.11): `id`, `kind` and at least one seat, each listed once; a
+  `shape` of exactly one `rect` or `circle`, with a positive size or radius.
+- Booking modes (§4.12): `booking` on the map, a section and a group, and each
+  value of a session's `bookingModes`, is `seats`, `whole` or `either`.
+- Whole prices (§4.9.1): `wholePrice` is a `Money`, and `wholePriceTier` a
+  non-empty string, on the map, a section and a group.
+- The retired `Seat.companions` (§4.12.4) is no longer a member, so
+  `additionalProperties` rejects it. The validator rejects it too, with a
+  message pointing at groups, for a consumer whose schemas are relaxed.
 - `Money.amount` as an integer in minor units, and `Money.currency` as a
   three-letter uppercase ISO 4217 code (§4.8).
 - Enumerated values: `SeatStatus.status`, `Accessibility.transferArmrest`,
@@ -199,18 +211,23 @@ applies.
 | `Seat.type` resolves against `legend[].id` | §4.6 | `seat-type-unresolved` | [`dangling-seat-type`](../examples/validator-only/dangling-seat-type.map.kerusi.json) |
 | `Seat.priceTier` and `SeatType.defaultPriceTier` resolve against `priceTiers[].id` | §4.6, §4.9 | `seat-price-tier-unresolved`, `seat-type-default-price-tier-unresolved` | [`dangling-price-tier`](../examples/validator-only/dangling-price-tier.map.kerusi.json) |
 | `Seat.row` resolves against `Section.rows[].id`, when `rows` is present | §4.6 | `seat-row-unresolved` | [`dangling-row`](../examples/validator-only/dangling-row.map.kerusi.json) |
-| `Seat.companions[]` resolve to other seats **in the same section**, and are fully symmetric | §4.6 | `companion-unresolved`, `companion-self-reference`, `companion-asymmetric`, `companion-group-incomplete` | [`asymmetric-companions`](../examples/validator-only/asymmetric-companions.map.kerusi.json) |
+| `Group.seats[]` resolve to seats **in the group's own section** | §4.11 | `group-seat-unresolved` | [`dangling-group-seat`](../examples/validator-only/dangling-group-seat.map.kerusi.json) |
+| A seat belongs to at most one group | §4.6, §4.11 | `group-seat-shared` | [`seat-in-two-groups`](../examples/validator-only/seat-in-two-groups.map.kerusi.json) |
+| A group's shape has its centre on the canvas | §4.11 | `group-shape-outside-canvas` | [`group-shape-outside-canvas`](../examples/validator-only/group-shape-outside-canvas.map.kerusi.json) |
+| `wholePriceTier` on the map, a section or a group resolves against `priceTiers[].id` | §4.6, §4.9.1 | `whole-price-tier-unresolved` | [`dangling-whole-price-tier`](../examples/validator-only/dangling-whole-price-tier.map.kerusi.json) |
+| No seat carries the retired `companions` | §4.12.4 | `companions-retired` | [`seat-companions-retired`](../examples/invalid/seat-companions-retired.map.kerusi.json) (also schema-rejected) |
 | Every seat and element lies on the canvas: `x` ≤ `canvas.width`, `y` ≤ `canvas.height` | §4.3.1, §4.4.1 | `seat-outside-canvas`, `element-outside-canvas` | [`seat-outside-canvas`](../examples/validator-only/seat-outside-canvas.map.kerusi.json), [`element-outside-canvas`](../examples/validator-only/element-outside-canvas.map.kerusi.json) |
 | No two seats in a section share a `row` and `col` | §4.3.5 | `seat-row-col-duplicate` | [`duplicate-row-col`](../examples/validator-only/duplicate-row-col.map.kerusi.json) |
 | A row shape's `cols` runs from first to last, not backwards | §4.2.3 | `row-shape-cols-reversed` | [`row-shape-cols-reversed`](../examples/validator-only/row-shape-cols-reversed.map.kerusi.json) |
-| One currency across the whole map | §4.9 | `map-currency-mixed` | [`mixed-currencies`](../examples/validator-only/mixed-currencies.map.kerusi.json) |
+| One currency across the whole map, whole prices included | §4.9, §4.9.1 | `map-currency-mixed` | [`mixed-currencies`](../examples/validator-only/mixed-currencies.map.kerusi.json), [`whole-price-currency`](../examples/validator-only/whole-price-currency.map.kerusi.json) |
 | `Seat.id` uniqueness across the whole map | §4.3 | `seat-id-duplicate` | [`duplicate-seat-ids`](../examples/validator-only/duplicate-seat-ids.map.kerusi.json) |
-| `Section.id` and `Element.id` uniqueness across the whole map | §4.6 | `section-id-duplicate`, `element-id-duplicate` | [`duplicate-section-ids`](../examples/validator-only/duplicate-section-ids.map.kerusi.json), [`duplicate-element-ids`](../examples/validator-only/duplicate-element-ids.map.kerusi.json) |
+| `Section.id`, `Element.id` and `Group.id` uniqueness across the whole map | §4.6 | `section-id-duplicate`, `element-id-duplicate`, `group-id-duplicate` | [`duplicate-section-ids`](../examples/validator-only/duplicate-section-ids.map.kerusi.json), [`duplicate-element-ids`](../examples/validator-only/duplicate-element-ids.map.kerusi.json), [`duplicate-group-ids`](../examples/validator-only/duplicate-group-ids.map.kerusi.json) |
 | `RowMeta.id` uniqueness within its section | §4.6 | `row-id-duplicate` | [`duplicate-row-ids`](../examples/validator-only/duplicate-row-ids.map.kerusi.json) |
 | `SeatType.id` and `PriceTier.id` uniqueness within the map | §4.6 | `seat-type-id-duplicate`, `price-tier-id-duplicate` | [`duplicate-seat-type-ids`](../examples/validator-only/duplicate-seat-type-ids.map.kerusi.json), [`duplicate-price-tier-ids`](../examples/validator-only/duplicate-price-tier-ids.map.kerusi.json) |
 | `updatedAt` strictly increasing across a delta stream | §5.2 | `delta-updated-at-not-increasing`, via `validateDeltaStream` | stream cases in [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
+| A session names its map, and its `bookingModes` keys name sections and groups of that map | §4.12.2, §5.3 | `session-map-mismatch`, `session-booking-mode-unresolved`, via `checkSession(session, map)` | session cases in [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
 
-The validator also reports two **warnings**, which §4 says a validator SHOULD
+The validator also reports three **warnings**, which §4 says a validator SHOULD
 report and MUST NOT reject a document for. They are returned in `warnings`,
 never in `errors`, and never affect `valid`:
 
@@ -218,6 +235,7 @@ never in `errors`, and never affect `valid`:
 |---|---|---|---|
 | Two seats' footprints overlap — a square of the applicable `seatSize`, turned by `rotation`. Seats that only touch do not; seats in different sections can, since they share one canvas | §4.3.1 | `seat-overlap`, once per pair, at the later seat | [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
 | A seat lies outside its section's `bounds` | §4.1 | `seat-outside-section-bounds` | [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
+| A group's shape overlaps a seat outside the group. Its own seats may overlap it | §4.11 | `group-shape-overlaps-seat`, once per seat, at the shape | [`test/semantic-cases.mjs`](test/semantic-cases.mjs) |
 
 Two notes on scope:
 
@@ -226,7 +244,11 @@ Two notes on scope:
   and a seat's `col` may fall outside its row shape's `cols`, in which case it
   simply has no guide point. `guidePoint` and `isOnGuide` are exported for
   editors, not used to judge a document.
-- **Cross-document** checking remains out of scope. Whether a `KerusiState`'s
+- **Sessions against their maps.** A session's booking-mode overrides name
+  sections and groups of another document, so `validate(session, 'session')`
+  checks only the session's shape. `checkSession(session, map)` checks the
+  rest when both are in hand.
+- **Other cross-document** checking remains out of scope. Whether a `KerusiState`'s
   seat keys match `Seat.id` in the referenced map (§3) needs both documents and
   a way to resolve `sessionId` to a `mapId`; the validator takes one document
   (or one stream) at a time.
@@ -246,22 +268,28 @@ registered extension.
   locale-map labels, a row with no seats, a labelled gap and unpriced seats;
   a map with a stage-only section carrying no seats; a lounge with every
   registered seat form, including a three-place sofa and a four-place pew; and
-  a map whose only form is implementation-defined.
+  a map whose only form is implementation-defined; a group of every registered
+  kind, with `rect`, `circle` and no shape, and a group of one seat; and the
+  §6.8 lounge and its quiz-night session.
 - `examples/invalid/` — documents that MUST NOT validate: missing required
   members (`canvas`, `seatSize`, `legend`, a seat's or an element's `x`/`y`), a
   wrong `kerusi` version, a bare top-level vendor field, a zero-width canvas, a
   zero `seatSize`, a negative coordinate, a `col` of 0 and a `col` without a
   `row`, an element addressed by `row`/`col`, a zero-width element, row shapes
   with two kinds, an unknown kind or a missing member, the removed `layout` and
-  `aspectRatio` members, an empty seat `form`, a lowercase currency, a fractional `Money.amount`, an
+  `aspectRatio` members, an empty seat `form`, a seat with the retired
+  `companions`, a group with no seats, a group shape with two kinds or a zero
+  radius, an unknown booking mode on a map and on a session, a lowercase currency, a fractional `Money.amount`, an
   ISO 8601 timestamp that is not RFC 3339, and state/delta documents with both
   or neither of `sessionId`/`mapId`.
 - `examples/validator-only/` — documents that **pass** these schemas but that a
   conformant validator MUST reject: dangling `type`/`priceTier`/`row`
-  references, asymmetric `companions`, a seat and an element off the canvas,
+  references, a group seat that does not resolve, a seat in two groups, a
+  group shape off the canvas, a dangling `wholePriceTier`, a whole price in a
+  second currency, a seat and an element off the canvas,
   two seats sharing a row and column, a row shape whose `cols` run backwards,
   mixed currencies, and a duplicate id of each kind — seat, section, element
-  (across two sections), row, seat type and price tier. At least one per row of
+  and group (across two sections), row, seat type and price tier. At least one per row of
   the first table above, and the fixture set the validator is tested against.
 
 Run the corpus through both stages of the validator:
@@ -279,4 +307,9 @@ code and JSON Pointer expected of it — not merely that it failed somehow. It
 finishes with [`test/semantic-cases.mjs`](test/semantic-cases.mjs), which covers
 what a corpus of single files cannot: the accepting side of each rule, the
 warnings, the guide points and neighbours of §4.2.3 and §4.3.5, the section and
-row ordering of §4.1.1 and §4.2.1, and delta-stream monotonicity.
+row ordering of §4.1.1 and §4.2.1, delta-stream monotonicity, and sessions
+checked against their maps. Last, [`test/booking-cases.mjs`](test/booking-cases.mjs)
+runs the [booking-units corpus](../examples/booking-units) through
+[`booking.mjs`](booking.mjs): each map, session and state is validated, then
+its booking units, whole units, and the validity and price of each selection
+are compared with what the corpus expects.

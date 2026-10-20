@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Version | 1.0.0-draft |
-| Revision | 16 (§11) |
+| Revision | 17 (§11) |
 | Status | Draft — open for comment |
 | Date | 2026-10-19 |
 | Editor | Shad |
@@ -85,8 +85,8 @@ the sections that follow:
 2. It **excludes client-local selection state** from the wire format;
    whether a given user has highlighted a seat is session state, never
    transmitted as part of a Kerusi document (§2).
-3. It **adds sections, pricing, seat types, companion seats, and
-   non-seat elements** required once a layout exceeds a single room
+3. It **adds sections, pricing, seat types, furniture, booking units,
+   and non-seat elements** required once a layout exceeds a single room
    (§4).
 4. It **places every seat on one canvas** and records which seats are
    neighbours separately, so curved rows, round tables, stadium bowls,
@@ -117,8 +117,8 @@ specific rule governs.
   drawn — in pixels, colours, or symbols.
 - **Progressive enhancement.** A minimal `KerusiMap` (seats with
   positions on a canvas, and nothing else) MUST be valid. Rows and
-  adjacency, row shapes, pricing, multiple sections, and companion seats
-  are optional layers.
+  adjacency, row shapes, pricing, multiple sections, groups, and booking
+  modes are optional layers.
 - **Forward-compatible extensibility.** Every object type defined by
   this specification accepts an optional `metadata` member for
   implementation-specific data. A conformant consumer MUST ignore any
@@ -182,6 +182,9 @@ interface KerusiMap {
   seatSize: number;             // REQUIRED. A seat's footprint, in canvas units (§4.5).
   legend: SeatType[];           // REQUIRED. Vocabulary of seat types used in this map.
   priceTiers?: PriceTier[];     // Named price tiers, referenced by id.
+  booking?: BookingMode;        // How the whole venue may be booked (§4.12).
+  wholePrice?: Money;           // Venue hire (§4.9.1).
+  wholePriceTier?: string;      // References a PriceTier.id (§4.9.1).
   sections: Section[];          // REQUIRED.
   metadata?: Record<string, unknown>;
 }
@@ -221,6 +224,11 @@ interface Section {
   directions?: Direction[];       // Optional human-facing axis labels — see §4.10.
   seats: Seat[];                  // REQUIRED. Flat list; order is not significant.
   elements?: Element[];           // Non-bookable features: screens, stages, aisles, stairs.
+  groups?: Group[];               // Furniture, and sets of seats that belong together
+                                    //   (§4.11).
+  booking?: BookingMode;          // How this room or zone may be booked (§4.12).
+  wholePrice?: Money;             // Room hire (§4.9.1).
+  wholePriceTier?: string;        // References a PriceTier.id (§4.9.1).
   metadata?: Record<string, unknown>;
 }
 
@@ -405,8 +413,6 @@ interface Seat {
   type: string;                    // REQUIRED. References a SeatType.id in the map's legend.
   priceTier?: string;              // References a PriceTier.id.
   price?: Money;                   // Literal override; takes precedence over priceTier.
-  companions?: string[];           // ids of other seats that must be booked together
-                                     //   (couple/sofa seats, family bays).
   attributes?: string[];           // Free tags: "aisle" | "window" | "extra-legroom"
                                      //   | ... . Non-exclusive.
   accessibility?: Accessibility;   // Structured accessibility properties (§4.3.4).
@@ -483,8 +489,8 @@ interface Accessibility {
   transferArmrest?: "left" | "right" | "both" | "fixed" | "none";
   aisleChairCompatible?: boolean;   // Reachable via aisle-chair transfer.
   companionRequired?: boolean;      // Occupant is expected to need an adjacent
-                                      //   companion seat. Pair with Seat.companions
-                                      //   (§4.6) to link the actual companion seat.
+                                      //   companion seat. Link the actual companion
+                                      //   seat with a group booked whole (§4.11, §4.12).
 }
 ```
 
@@ -569,8 +575,8 @@ is the same size.
 
 Every seat, element, and section in a map is placed on this one canvas.
 A renderer's **canonical view** draws the whole canvas: every seat at its
-`x`/`y` with its footprint, and every element at its `x`/`y` with its
-size. A renderer chooses the scale from canvas units to its own, and MAY
+`x`/`y` with its footprint, every element at its `x`/`y` with its size,
+and every group's shape under that group's seats (§4.11). A renderer chooses the scale from canvas units to its own, and MAY
 crop, zoom, pan, or mirror the whole drawing (§2). It MUST NOT otherwise
 move, resize, or reflow anything in the canonical view, and it does no
 layout arithmetic of its own: no cell sizes, no row spacing, no
@@ -593,6 +599,7 @@ apart so that they can never contradict one another:
 | Where is the seat drawn? | `x`, `y`, `rotation`, `seatSize` (§4.3.1) | Every renderer |
 | Which seats are next to it? | `row`, `col` (§4.3.5) | Selection, keyboard and screen-reader navigation |
 | What shape was its row meant to have? | `RowMeta.shape` (§4.2.3) | Editors only |
+| What piece is it on, and what does a tap book? | `Section.groups` (§4.11), `booking` (§4.12) | Renderers, selection, booking engines |
 
 #### 4.5.1 Other views (non-normative)
 
@@ -617,7 +624,8 @@ document:
 | `Seat.row` | `RowMeta.id`, when `Section.rows` is present |
 | `Seat.type` | `SeatType.id` in `KerusiMap.legend` |
 | `Seat.priceTier` | `PriceTier.id` in `KerusiMap.priceTiers` |
-| `Seat.companions[]` | other `Seat.id` values within the same section |
+| `Group.seats[]` | `Seat.id` values within the group's own section (§4.11) |
+| `wholePriceTier`, on the map, a section or a group | `PriceTier.id` in `KerusiMap.priceTiers` (§4.9.1) |
 
 A document in which any of these references fails to resolve is
 **invalid**. A conformant validator MUST reject such a document rather
@@ -626,12 +634,11 @@ The sole exception is `row`: if a section declares no `rows` array at
 all, `Seat.row` is treated as an opaque free-text label with nothing to
 resolve against, and is always valid.
 
-`companions` references MUST be **symmetric**: if seat A lists seat B in
-`companions`, seat B MUST list seat A in return; for a group larger than
-a pair, every member MUST list every other member. A conformant
-validator MUST reject a `companions` set that is not fully mutual. This
-prevents a multi-seat booth from silently ending up partially linked
-because one seat's array drifted out of sync with the others.
+**Group membership.** A seat belongs to at most one group (§4.11). A
+conformant validator MUST reject a document in which two groups list the
+same seat, or one group lists it twice: the seat's booking unit (§4.12)
+and the piece it is drawn on would both be ambiguous. It MUST also
+reject a seat that carries the retired `companions` member (§4.12.4).
 
 **Positions and adjacency** are validated on the same footing, because
 each failure below would otherwise leave two consumers to disagree about
@@ -642,13 +649,15 @@ MUST reject a document in which:
   (§4.3.1, §4.4.1);
 - a seat carries a `col` that is not a positive integer, or a `col`
   without a `row` (§4.3.5);
-- two seats in one section share the same `row` and `col` (§4.3.5); or
-- a row shape's `cols` names a first column after its last (§4.2.3).
+- two seats in one section share the same `row` and `col` (§4.3.5);
+- a row shape's `cols` names a first column after its last (§4.2.3); or
+- a group's shape has its centre outside the canvas (§4.11).
 
 A validator SHOULD report, and MUST NOT reject a document for, seats
-whose footprints overlap (§4.3.1) and seats outside their section's
-`bounds` (§4.1). Either is likely a producer error, but neither leaves
-the document ambiguous.
+whose footprints overlap (§4.3.1), seats outside their section's
+`bounds` (§4.1), and a group's shape that overlaps a seat outside the
+group (§4.11). Each is likely a producer error, but none leaves the
+document ambiguous.
 
 **Identifier uniqueness.** A reference is only well-defined if its target
 is: an id that appears twice resolves to two objects, and a consumer is
@@ -660,6 +669,7 @@ within the scope below:
 | `Seat.id` | the whole `KerusiMap`, across all sections (§4.3) |
 | `Section.id` | the whole `KerusiMap` |
 | `Element.id` | the whole `KerusiMap`, across all sections |
+| `Group.id` | the whole `KerusiMap`, across all sections |
 | `SeatType.id` | `KerusiMap.legend` |
 | `PriceTier.id` | `KerusiMap.priceTiers` |
 | `RowMeta.id` | its own section's `rows` |
@@ -679,7 +689,8 @@ for the same seat. A duplicate `Section.id` or `Element.id` is not a
 reference target within this document, but it is the key by which
 anything outside the document — an availability panel, a per-section
 rendering override, an analytics event — identifies the object, and the
-same ambiguity follows.
+same ambiguity follows. A duplicate `Group.id` would, in addition, leave
+a session's booking-mode override (§5.3) naming two groups at once.
 
 ### 4.7 SeatType (legend entry)
 
@@ -772,10 +783,64 @@ stopping at the first match:
    terminal state — general admission, lecture halls, and free events
    legitimately carry no price.
 
-A `KerusiMap` MUST NOT mix currencies across seats; exactly one
-`currency` value applies to the whole map. Conversion into a shopper's
+A `KerusiMap` MUST NOT mix currencies across seats and whole prices
+(§4.9.1); exactly one `currency` value applies to the whole map. Conversion into a shopper's
 local currency is a presentation-layer concern, performed at render
 time, and is out of scope for this specification.
+
+#### 4.9.1 Pricing a selection
+
+```ts
+// On KerusiMap, Section and Group:
+wholePrice?: Money;              // A literal. Takes precedence over wholePriceTier.
+wholePriceTier?: string;         // References a PriceTier.id (§4.6).
+```
+
+A level — the map, a section, or a group (§4.11) — MAY carry a **whole
+price**: venue hire, room hire, a table or a sofa price. A level's whole
+price is its `wholePrice`, else the price of the tier its
+`wholePriceTier` names, else none. It applies only while the level's
+effective booking mode (§4.12.1) is `whole` or `either`. While the mode
+is `seats` the whole price is ignored, and is not invalid, since another
+session may make the level `either`.
+
+A consumer pricing a selection of seats MUST do so as follows:
+
+1. Visit the levels from the outermost inwards: the map, then each
+   section, then each group, each in declaration order.
+2. A level that has a whole price that applies, and every one of whose
+   seats is in the selection and not yet charged, is charged its whole
+   price, and its seats are taken out.
+3. Every seat left is priced by §4.9. An unpriced seat adds nothing.
+4. The total is the sum. A selection in which nothing is priced is
+   unpriced.
+
+So a level booked whole with no whole price costs the sum of its seats'
+prices, and a whole price wins over its seats' own prices, `Seat.price`
+included, for the seats it covers. A customer who taps all four seats of
+an `either` table one by one pays the table price, the same as one who
+chose "the whole table": a selection's price never depends on how it was
+picked, and neither way is a way round the other.
+
+Priced against the lounge of §6.8 — table seats at MYR 50, table `T1`
+booked `either` at a table price of MYR 180, the private room booked
+`whole` at MYR 1,200, and the venue `either` at MYR 5,000:
+
+| Selection | Priced as | Total |
+|---|---|---|
+| Table `T1`, chosen whole | `T1`'s whole price | MYR 180 |
+| `T1`'s four seats, tapped one by one | `T1`'s whole price: the selection covers it | MYR 180 |
+| Two of `T1`'s seats | two seats | MYR 100 |
+| The love seat, booked `whole` with no whole price | its two places, at MYR 70 | MYR 140 |
+| The private room | its whole price | MYR 1,200 |
+| Every seat in the venue | the venue's whole price | MYR 5,000 |
+
+One currency per map (§4.9) covers whole prices too, and a
+`wholePriceTier` that does not resolve is invalid (§4.6). Fees, taxes and
+per-event prices remain out of scope, as they are for seats: a booking
+engine applies them. `priceSelection` in `schema/booking.mjs` is a
+reference implementation, checked against the conformance corpus in
+`examples/booking-units/`.
 
 ### 4.10 Direction labels (optional)
 
@@ -834,6 +899,182 @@ entirely a rendering decision, exactly as it already is for `col` and
 therefore agree on every `Direction` label in a document while still
 choosing to draw the section mirrored relative to one another, and both
 remain conformant.
+
+### 4.11 Groups
+
+Some seats belong to a piece of furniture: the places on a sofa, a love
+seat or a pew, the chairs round a table, a booth. Others belong together
+with no piece at all, such as a wheelchair space and its companion seat.
+A **group** names such a set, MAY give the piece a footprint of its own,
+and says how the set may be booked (§4.12).
+
+```ts
+interface Group {
+  id: string;                    // REQUIRED. Unique within the KerusiMap (§4.6).
+  kind: string;                  // REQUIRED. "table" | "sofa" | "loveseat" | "pew"
+                                   //   | "bench" | "booth" | "box" | "companion"
+                                   //   | implementation-defined.
+  label?: string | Record<string, string>;  // e.g. "Table 3", "Pew 12".
+  seats: string[];               // REQUIRED. Seat ids in this section. At least one.
+  shape?: GroupShape;            // The piece's own footprint, drawn under its seats.
+  booking?: BookingMode;         // How the group may be booked (§4.12).
+  wholePrice?: Money;            // A table or sofa price (§4.9.1).
+  wholePriceTier?: string;       // References a PriceTier.id (§4.9.1).
+  metadata?: Record<string, unknown>;
+}
+
+type GroupShape =                 // Exactly one member. Canvas units (§4.5).
+  | { rect:   { x: number; y: number; width: number; height: number; rotation?: number } }
+  | { circle: { center: Point; radius: number } };
+```
+
+**Membership.** `Group.seats` lists seats of the group's own section by
+`Seat.id`, each once, and holds at least one. A seat belongs to **at most
+one** group. A validator MUST reject a group seat that does not resolve,
+and a seat that two groups list (§4.6). A group of one seat is valid: a
+table with every chair but one taken away is still a table.
+
+**Kinds.** `kind` says what the group is, as `Element.kind` says what an
+element is. The registered kinds are:
+
+| `kind` | What it is |
+|---|---|
+| `table` | Chairs at a table: round, rectangular or long. |
+| `sofa` | A sofa. |
+| `loveseat` | A love seat or a double chair: a sofa for two. |
+| `pew` | A pew. |
+| `bench` | A bench. |
+| `booth` | A booth: a table with fixed seating. |
+| `box` | A box, as in a theatre. |
+| `companion` | A set with no piece of furniture, such as a wheelchair space and its companion seat. |
+
+Any other value is implementation-defined. `kind` is informational: it
+chooses how a renderer draws the piece and how a consumer names its
+seats ("Table 3, seat 4"), and it MUST NOT affect price, validation or
+booking. A consumer that does not know a kind draws the group's shape
+plainly.
+
+**Shape.** `shape` is OPTIONAL, and holds exactly one of a `rect` —
+centred on its `x`/`y` and turned by `rotation` degrees clockwise, exactly
+as an element is (§4.4.1) — or a `circle` of positive `radius` round
+`center`. Its centre MUST lie on the canvas, as an element's does. The
+canonical view (§4.5) draws every group's shape under that group's
+seats; what is drawn inside it — wood, upholstery, a tablecloth — is a
+rendering decision, as it is for an element. A group with no shape is
+drawn as its seats alone.
+
+**Overlap.** A seat's footprint may overlap its own group's shape — a
+chair pulled up to a table's edge, a place on a sofa — and that is not
+reported. A validator SHOULD report a group's shape that overlaps the
+footprint of a seat outside the group, and MUST NOT reject the document
+for it, as for overlapping seats (§4.3.1).
+
+**Groups and rows are independent.** A pew is usually also one row, and a
+round table one row with a `circle` shape (§4.2.3). The row says who sits
+next to whom and how an editor re-spaces the seats; the group says what
+piece they sit on. Neither implies the other. A group and a row MAY share
+an id, since each kind of identifier is its own namespace (§4.6).
+
+**Groups don't nest**, and a group does not span sections. The larger
+levels, a room and the venue, are the section and the map (§4.12).
+
+### 4.12 Booking units
+
+```ts
+type BookingMode = "seats" | "whole" | "either";
+```
+
+`KerusiMap.booking`, `Section.booking` and `Group.booking` are OPTIONAL.
+Each says how its **level** — the venue, a room or zone, a piece of
+furniture — may be booked:
+
+- **`seats`**, the default: the level adds nothing, and its seats are
+  booked as the levels inside it say.
+- **`whole`**: the level's seats can be booked only all together.
+- **`either`**: as `seats`, and the whole level is also offered as one
+  booking.
+
+| Venue | How it is written |
+|---|---|
+| A love seat booked only as a pair | its group has `booking: "whole"` |
+| A table sold by the seat, or whole at a table price | its group has `booking: "either"` and a whole price (§4.9.1) |
+| A private dining room hired only whole | its section has `booking: "whole"` |
+| "Book seats, or hire the whole place" | the map has `booking: "either"` |
+| A wedding that sells every table whole | its session sets each table's group to `"whole"` (§5.3) |
+
+#### 4.12.1 Effective mode
+
+A level's **effective mode** is the override a `KerusiSession` gives it
+in `bookingModes` (§5.3), else its own `booking`, else `"seats"`. Without
+a session, every level's effective mode is its own.
+
+A map is a physical configuration, reused and cached across events (§3).
+It carries the default — this love seat is a pair — and a session
+carries one event's choice, such as selling every table whole at a
+wedding.
+
+#### 4.12.2 Booking units and whole units
+
+A seat's **booking unit** is every seat of the outermost level containing
+it whose effective mode is `whole`, looking at the map, then the seat's
+section, then its group. When none of them is `whole`, the seat's
+booking unit is the seat alone. The booking units of a map therefore
+partition its seats: every seat is in exactly one.
+
+Every level whose effective mode is `either`, that has at least one
+seat, and that no level with effective mode `whole` contains, also
+offers itself as a **whole unit**: one booking of all its seats. A whole
+unit is always a union of booking units.
+
+Two conformant consumers MUST derive the same booking units and whole
+units from the same map and session. `bookingUnits` in
+`schema/booking.mjs` is a reference implementation, and
+`examples/booking-units/` a conformance corpus of maps, sessions, and
+the units and prices expected of them.
+
+Every key of a session's `bookingModes.sections` and
+`bookingModes.groups` MUST name a section or a group of the session's
+map. A validator that has both documents MUST reject a session that
+does not: an override that named nothing would change nothing, and an
+event's "every table sold whole" would quietly not happen.
+
+#### 4.12.3 Selections
+
+A **valid selection** is a non-empty union of booking units: it holds
+every seat of every booking unit it touches. Choosing a whole unit is
+therefore valid, as is any combination of booking units. A consumer MUST
+NOT submit any other selection, and a booking engine SHOULD refuse one.
+
+A booking unit or a whole unit can be booked only while every seat in it
+is `available` (§5.1). A renderer MUST NOT offer a whole unit while any
+of its seats is not, and SHOULD show a seat whose booking unit cannot be
+booked as unavailable.
+
+**State stays per seat.** Booking a whole table writes `booked` on each
+of its seats. There is no status of a group, a section or a map; a
+consumer that needs one, such as "table 3 is taken," derives it from
+the table's seats.
+
+How many seats one booking may hold, whether a lone seat may be left
+empty, and what happens to holds already made when a session's override
+changes mid-sale are booking-engine policy, as hold durations are
+(§5.1). So is selling a number of places without choosing which — "four
+places on this pew, any": the seats of a group are always individual
+seats.
+
+#### 4.12.4 Retired: `companions`
+
+Up to rev 16, `Seat.companions` listed, symmetrically, the other seats a
+seat had to be booked with. It is removed. A set of seats booked
+together is a group with `booking: "whole"`: of kind `companion` when no
+piece of furniture is involved, and `loveseat`, `table` or the like when
+one is. Keeping both would have left two ways to say "booked together,"
+free to disagree.
+
+The member is reserved. A validator MUST reject a seat that carries
+`companions`, and SHOULD say that a group replaces it. §2's rule that a
+consumer ignores a member it does not recognise does not apply here:
+ignored, a pair sold together would quietly become two seats sold apart.
 
 ---
 
@@ -962,9 +1203,22 @@ interface KerusiSession {
   startsAt?: string;                   // RFC 3339 (§5.1.1) — showtime / departure /
                                         //   event start.
   endsAt?: string;
+  bookingModes?: {                     // This event's booking-mode overrides (§4.12.1).
+    map?: BookingMode;
+    sections?: Record<string, BookingMode>;   // By Section.id.
+    groups?: Record<string, BookingMode>;     // By Group.id.
+  };
   metadata?: Record<string, unknown>;
 }
 ```
+
+`bookingModes` is OPTIONAL. It lets one event sell a map differently from
+the next — every table whole at a wedding, by the seat at a quiz night —
+without a copy of the map (§4.12.1). Each override replaces the named
+level's own `booking` for this session only, and every key of `sections`
+and `groups` MUST name a section or a group of the session's map
+(§4.12.2). Overrides are by id only: a tool that wants every table sold
+whole lists the tables.
 
 `KerusiState` and `KerusiStateDelta` reference the session, not the map,
 via `sessionId`, when a session exists (§6.5). `KerusiSession` is
@@ -1032,11 +1286,12 @@ is simply absent — that is the aisle: nothing is drawn at `x: 126`, and
 `1B` and `1C` are not neighbours (§4.3.5). No filler entry is required
 (§4.3.2).
 
-### 6.2 Cinema with a curved row and companion (couple) seats
+### 6.2 Cinema with a curved row and a love seat
 
-Row A is laid out on an arc, and records it as its shape; `companions`
-links two seats sold as a single unit, and the couple recliners' type
-draws each of them as one place on a sofa (§4.7.1).
+Row A is laid out on an arc, and records it as its shape. A group makes
+`L1` and `L2` one love seat, sold only as a pair (§4.11, §4.12), and the
+couple recliners' type draws each of them as one place on a sofa
+(§4.7.1).
 
 ```json
 {
@@ -1095,8 +1350,7 @@ draws each of them as one place on a sofa (§4.7.1).
           "col": 1,
           "x": 480,
           "y": 700,
-          "type": "recliner-couple",
-          "companions": ["L2"]
+          "type": "recliner-couple"
         },
         {
           "id": "L2",
@@ -1105,8 +1359,17 @@ draws each of them as one place on a sofa (§4.7.1).
           "col": 2,
           "x": 520,
           "y": 700,
-          "type": "recliner-couple",
-          "companions": ["L1"]
+          "type": "recliner-couple"
+        }
+      ],
+      "groups": [
+        {
+          "id": "L-pair",
+          "kind": "loveseat",
+          "label": "Love seat L1–L2",
+          "seats": ["L1", "L2"],
+          "shape": { "rect": { "x": 500, "y": 704, "width": 96, "height": 48 } },
+          "booking": "whole"
         }
       ]
     }
@@ -1128,8 +1391,14 @@ Every seat faces the screen at the top of the canvas, since a seat at
 looks a little to the right, towards the screen's centre. `standard`
 declares no `form`, so its seats are drawn as chairs, and `L1` and `L2`
 are drawn as the two places of a love seat. The form changes nothing
-else: each is still one seat with its own price, and `companions` alone
-is what sells them together.
+else: each is still one seat with its own price and its own state.
+
+The group `L-pair` is the love seat itself. Its `rect` is drawn under
+both places, a little deeper than they are so that the frame shows
+behind them, and its `booking: "whole"` makes the two seats one booking
+unit (§4.12.2): a tap on either selects both, and the pair costs the sum
+of its seats, MYR 90, since it has no whole price (§4.9.1). Its `kind`
+says how to draw it and how to name the seats; it changes neither.
 
 ### 6.3 Flight with cabin classes and exit row
 
@@ -1339,8 +1608,7 @@ The two sections share the canvas (§4.5).
           "col": 1,
           "x": 1300,
           "y": 230,
-          "type": "table",
-          "companions": ["T1-2", "T1-3", "T1-4"]
+          "type": "table"
         },
         {
           "id": "T1-2",
@@ -1348,8 +1616,7 @@ The two sections share the canvas (§4.5).
           "col": 2,
           "x": 1370,
           "y": 300,
-          "type": "table",
-          "companions": ["T1-1", "T1-3", "T1-4"]
+          "type": "table"
         },
         {
           "id": "T1-3",
@@ -1357,8 +1624,7 @@ The two sections share the canvas (§4.5).
           "col": 3,
           "x": 1300,
           "y": 370,
-          "type": "table",
-          "companions": ["T1-1", "T1-2", "T1-4"]
+          "type": "table"
         },
         {
           "id": "T1-4",
@@ -1366,10 +1632,19 @@ The two sections share the canvas (§4.5).
           "col": 4,
           "x": 1230,
           "y": 300,
-          "type": "table",
-          "companions": ["T1-1", "T1-2", "T1-3"]
+          "type": "table"
         },
         { "id": "S1", "x": 1408, "y": 702, "type": "wheelchair", "accessibility": { "wheelchairAccessible": true } }
+      ],
+      "groups": [
+        {
+          "id": "T1",
+          "kind": "table",
+          "label": "Table 1",
+          "seats": ["T1-1", "T1-2", "T1-3", "T1-4"],
+          "shape": { "circle": { "center": [1300, 300], "radius": 45 } },
+          "booking": "whole"
+        }
       ]
     },
     {
@@ -1409,7 +1684,8 @@ fields, and none of them overrides another:
   leaves a gap there, at `x: 704` — the aisle. `A9` has been moved off the
   line, down and to the right; it is still in row A and still next to
   `A8`. `S1` has no `row` or `col`, so it has no neighbours at all. The
-  table's four seats are one row, `T1`, and one companion group (§4.6).
+  table's four seats are one row, `T1`, and one group, also `T1`, whose
+  circle is the tabletop and which is booked whole (§4.11, §4.12).
 - **What shape each row was meant to have** is its `shape`, which only an
   editor reads (§4.2.3). `A1`–`A8` are on row A's line, and `A9`, about
   42 units from its guide point at `x: 1088`, is off it. The table's
@@ -1432,6 +1708,174 @@ book it (§4.3.4). None of the seats has a `rotation`, so every one faces
 up the canvas, towards the stage (§4.3.1) — the stools round the table
 included, which have no back to show it.
 
+### 6.8 A lounge: furniture, booking units and whole prices
+
+A lounge with a love seat, a three-seat sofa, a pew, a round table sold
+by the seat or whole, a private room hired whole, and the whole venue
+for hire — and a session that sells it differently for one night.
+
+```json
+{
+  "kerusi": "1.0",
+  "id": "lounge",
+  "name": "The Lounge",
+  "canvas": { "width": 1200, "height": 640 },
+  "seatSize": 40,
+  "legend": [
+    { "id": "loveseat", "label": "Love seat place", "form": "sofa", "defaultPriceTier": "premium" },
+    { "id": "sofa", "label": "Sofa place", "form": "sofa", "defaultPriceTier": "regular" },
+    { "id": "pew", "label": "Pew place", "form": "bench", "defaultPriceTier": "pew" },
+    { "id": "table-chair", "label": "Table seat", "defaultPriceTier": "regular" },
+    { "id": "private", "label": "Private room armchair", "form": "armchair", "defaultPriceTier": "regular" }
+  ],
+  "priceTiers": [
+    { "id": "regular", "label": "Regular", "price": { "amount": 5000, "currency": "MYR" } },
+    { "id": "premium", "label": "Premium", "price": { "amount": 7000, "currency": "MYR" } },
+    { "id": "pew", "label": "Pew", "price": { "amount": 3000, "currency": "MYR" } },
+    { "id": "table", "label": "Table of four", "price": { "amount": 18000, "currency": "MYR" } }
+  ],
+  "booking": "either",
+  "wholePrice": { "amount": 500000, "currency": "MYR" },
+  "sections": [
+    {
+      "id": "lounge",
+      "label": "Lounge",
+      "index": 0,
+      "bounds": { "x": 40, "y": 20, "width": 720, "height": 560 },
+      "rows": [
+        {
+          "id": "P1",
+          "label": "Pew 1",
+          "shape": { "line": { "from": [140, 400], "to": [260, 400], "cols": [1, 4] } }
+        },
+        {
+          "id": "T1",
+          "label": "Table 1",
+          "shape": { "circle": { "center": [560, 420], "radius": 80, "start": -90, "cols": [1, 4] } }
+        }
+      ],
+      "elements": [{ "id": "stage", "kind": "stage", "label": "Stage", "x": 400, "y": 60, "width": 600, "height": 60 }],
+      "seats": [
+        { "id": "LS1-1", "x": 140, "y": 200, "type": "loveseat" },
+        { "id": "LS1-2", "x": 180, "y": 200, "type": "loveseat" },
+        { "id": "SF1-1", "x": 300, "y": 200, "type": "sofa" },
+        { "id": "SF1-2", "x": 340, "y": 200, "type": "sofa" },
+        { "id": "SF1-3", "x": 380, "y": 200, "type": "sofa" },
+        { "id": "P1-1", "row": "P1", "col": 1, "x": 140, "y": 400, "type": "pew" },
+        { "id": "P1-2", "row": "P1", "col": 2, "x": 180, "y": 400, "type": "pew" },
+        { "id": "P1-3", "row": "P1", "col": 3, "x": 220, "y": 400, "type": "pew" },
+        { "id": "P1-4", "row": "P1", "col": 4, "x": 260, "y": 400, "type": "pew" },
+        { "id": "T1-1", "row": "T1", "col": 1, "x": 560, "y": 340, "rotation": 180, "type": "table-chair" },
+        { "id": "T1-2", "row": "T1", "col": 2, "x": 640, "y": 420, "rotation": 270, "type": "table-chair" },
+        { "id": "T1-3", "row": "T1", "col": 3, "x": 560, "y": 500, "type": "table-chair" },
+        { "id": "T1-4", "row": "T1", "col": 4, "x": 480, "y": 420, "rotation": 90, "type": "table-chair" }
+      ],
+      "groups": [
+        {
+          "id": "LS1",
+          "kind": "loveseat",
+          "label": "Love seat",
+          "seats": ["LS1-1", "LS1-2"],
+          "shape": { "rect": { "x": 160, "y": 204, "width": 96, "height": 48 } },
+          "booking": "whole"
+        },
+        {
+          "id": "SF1",
+          "kind": "sofa",
+          "label": "Sofa",
+          "seats": ["SF1-1", "SF1-2", "SF1-3"],
+          "shape": { "rect": { "x": 340, "y": 204, "width": 136, "height": 48 } }
+        },
+        {
+          "id": "P1",
+          "kind": "pew",
+          "label": "Pew 1",
+          "seats": ["P1-1", "P1-2", "P1-3", "P1-4"],
+          "shape": { "rect": { "x": 200, "y": 404, "width": 172, "height": 44 } }
+        },
+        {
+          "id": "T1",
+          "kind": "table",
+          "label": "Table 1",
+          "seats": ["T1-1", "T1-2", "T1-3", "T1-4"],
+          "shape": { "circle": { "center": [560, 420], "radius": 50 } },
+          "booking": "either",
+          "wholePriceTier": "table"
+        }
+      ]
+    },
+    {
+      "id": "private",
+      "label": "Private room",
+      "index": 1,
+      "bounds": { "x": 840, "y": 300, "width": 320, "height": 200 },
+      "booking": "whole",
+      "wholePrice": { "amount": 120000, "currency": "MYR" },
+      "seats": [
+        { "id": "R1", "x": 940, "y": 350, "rotation": 180, "type": "private" },
+        { "id": "R2", "x": 1000, "y": 350, "rotation": 180, "type": "private" },
+        { "id": "R3", "x": 1060, "y": 350, "rotation": 180, "type": "private" },
+        { "id": "R4", "x": 940, "y": 450, "type": "private" },
+        { "id": "R5", "x": 1000, "y": 450, "type": "private" },
+        { "id": "R6", "x": 1060, "y": 450, "type": "private" }
+      ],
+      "groups": [
+        {
+          "id": "PT",
+          "kind": "table",
+          "label": "Private table",
+          "seats": ["R1", "R2", "R3", "R4", "R5", "R6"],
+          "shape": { "rect": { "x": 1000, "y": 400, "width": 200, "height": 60 } }
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **The pieces** (§4.11). Each piece of furniture is a group, and its
+  shape is drawn under its seats: the love seat's, the sofa's and the
+  pew's frames, the round tabletop of `T1`, and the private room's long
+  table `PT`. The love seat and sofa places have the `sofa` form and the
+  pew's the `bench` form (§4.7.1). The pew `P1` and the table `T1` are
+  each also a row of the same id: the row says who sits next to whom and
+  lets an editor re-space the seats, and the group says what they sit on.
+- **Which way they face** (§4.3.1). A seat at `rotation` 0 faces up the
+  canvas, so the chairs round `T1` are turned to face its centre: `T1-1`,
+  above it, at 180°, `T1-2`, to its right, at 270°, `T1-4`, to its left,
+  at 90°, and `T1-3`, below it, not at all. The private room's chairs
+  face their table the same way.
+- **What a tap books** (§4.12.2). With no session, the love seat is one
+  booking unit of both its places; every sofa, pew and table seat is a
+  booking unit of its own; and the private room, booked `whole`, is one
+  booking unit of six seats. Its table `PT` adds nothing, since the
+  room is already booked whole. Two whole units are offered as well:
+  table `T1`, and the venue, which are both `either`.
+- **What it costs** (§4.9.1). The table in §4.9.1 prices selections of
+  this map. A pew place costs MYR 30, a love seat MYR 140 for its two
+  places, and the private room's six seats are covered by its whole
+  price, MYR 1,200, whatever their own prices are.
+
+The same map, on quiz night:
+
+```json
+{
+  "kerusi": "1.0",
+  "id": "lounge-2026-11-14-quiz",
+  "mapId": "lounge",
+  "label": "Quiz night, 14 Nov 2026",
+  "startsAt": "2026-11-14T20:00:00+08:00",
+  "bookingModes": { "map": "seats", "groups": { "T1": "whole" } }
+}
+```
+
+The session overrides the map's `either` to `seats`, so the venue cannot
+be hired that night, and sets table `T1` to `whole`, so the table is one
+booking unit, sold only at its table price of MYR 180. Nothing else
+changes, and the map is the same document as on every other night.
+`examples/booking-units/lounge.json` holds every booking unit, whole unit
+and price in this section as a conformance case.
+
 ---
 
 ## 7. Conformance
@@ -1451,20 +1895,26 @@ A consumer (renderer, validator, or intermediary) is conformant if it:
 
 - correctly merges a `KerusiState` onto a `KerusiMap` by `Seat.id`
   (§3);
-- enforces the referential-integrity rules of §4.6, including
-  `companions` symmetry and identifier uniqueness;
+- enforces the referential-integrity rules of §4.6, including group
+  membership and identifier uniqueness, and rejects a seat that carries
+  the retired `companions` member (§4.12.4);
 - enforces the position and adjacency rules of §4.6, rejecting any seat
   or element without a position or outside the canvas, and any section in
   which two seats share a `row` and `col`;
 - draws its canonical view as §4.5 defines it, every seat at its `x`/`y`
-  with the footprint of §4.3.1, and never moves a seat because of its
+  with the footprint of §4.3.1, every group's shape under its seats
+  (§4.11), and never moves a seat because of its
   `row`, its `col`, or its row's shape (§4.2.3, §4.3.5);
 - derives adjacency only as §4.3.5 defines it;
 - draws a seat whose `form` it does not recognise as a `chair`, rather
   than rejecting the document (§4.7.1);
 - orders a map's sections as defined by §4.1.1, and a section's rows as
   defined by §4.2.1;
-- applies the price-resolution order of §4.9; and
+- derives booking units and whole units as §4.12.2 defines them, applies
+  a session's booking-mode overrides (§5.3), and offers or submits only
+  the selections §4.12.3 allows;
+- applies the price-resolution order of §4.9, and prices a selection as
+  §4.9.1 defines; and
 - ignores unrecognized members rather than rejecting the document
   because of them (§2).
 
@@ -1477,7 +1927,7 @@ A validator implementation SHOULD be published as a JSON Schema per
 version (§8) so that conformance can be checked mechanically rather than
 by inspection of this document.
 
-Rejecting a document with a dangling `row`/`type`/`priceTier`/`companions`
+Rejecting a document with a dangling `row`/`type`/`priceTier`/group
 reference, a duplicate identifier, a seat off the canvas, or two seats
 sharing a row and column (§4.6), is deliberately strict rather than
 lenient: silently dropping or mis-pricing the affected
@@ -1537,7 +1987,7 @@ a system around this format:
 - **`KerusiState` and `KerusiStateDelta` reveal booking activity, not
   identity.** A live feed of `held`/`booked` transitions can still leak
   information — for example, purchasing velocity or the size of a
-  travelling party inferable from `companions`. Systems exposing a
+  travelling party inferable from seats booked as one unit (§4.12). Systems exposing a
   public real-time feed should consider whether that inference is
   acceptable for the domain. Where it is not, mitigation is a
   deployment-layer decision this specification does not mandate but
@@ -1561,8 +2011,7 @@ this specification exits draft status:
   "STAIRS" printed mid-row? Rev 15 settled an `Element`'s geometry — it is
   placed and sized in canvas units, as a seat is (§4.4.1) — so what
   remains open here is the `kind` vocabulary, not the geometry underneath
-  it. A `"table"` kind, for drawing a tabletop under a `circle` row
-  (§4.2.3), would belong in that vocabulary.
+  it.
 - **Map-level directions.** Every section now shares one canvas (§4.5),
   so an `x` or `y` `Direction` (§4.10) describes the whole map, yet it is
   still declared per section, and two sections may disagree about which
@@ -1578,10 +2027,106 @@ rather than left open indefinitely: multi-leg/multi-day bookings
 `Seat.accessibility`, §4.3.4), right-to-left row direction (resolved as
 a rendering concern with no data-model change, §2), and hold/expiry
 semantics (resolved as intentionally delegated to the booking engine,
-§5.1).
+§5.1). The tabletop the "labelled gaps" item once asked about — a
+`"table"` element kind drawn under a `circle` row — is resolved as of
+rev 17: a table is a group with a shape (§4.11), not an element.
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 17** — Added groups, booking modes and whole prices,
+  and retired `companions`.
+
+  **Why.** Venues sell more than single seats. A love seat sells only as
+  a pair; a table sells by the seat at one event and only whole at the
+  next, or either way at a table price; a private room is hired whole;
+  a whole venue is hired for a wedding. Kerusi could say only that some
+  seats "must be booked together" (`companions`). It could not name or
+  draw the piece of furniture — §10 left a `"table"` element kind open,
+  and an editor drew tables as rings of chairs with no top — and it
+  priced nothing but seats. The three additions are one revision because
+  none is useful alone: groups that changed no booking would have left
+  two ways to say "booked together," booking modes need groups to apply
+  to, and a whole price needs booking units.
+
+  **What changed.**
+
+  - *Groups* (§4.11). `Section.groups` names a set of seats in one
+    section — a `table`, `sofa`, `loveseat`, `pew`, `bench`, `booth`,
+    `box`, or a `companion` set with no piece — with an OPTIONAL `rect`
+    or `circle` shape that the canonical view draws under its seats
+    (§4.5). A seat is in at most one group, and groups neither nest nor
+    span sections. They are independent of rows: a pew is often also a
+    row, and a round table a row with a `circle` shape. A validator
+    rejects a dangling group seat, a seat in two groups, a duplicate
+    `Group.id`, and a shape whose centre is off the canvas, and warns of
+    a shape over a seat outside its group.
+  - *Booking modes* (§4.12). `booking` — `seats`, `whole` or `either` — on
+    the map, a section and a group, and `KerusiSession.bookingModes` to
+    override any of them for one event (§5.3), so that the map stays one
+    cacheable physical configuration. A seat's booking unit is the
+    outermost `whole` level containing it, or the seat alone; an `either`
+    level that no `whole` level contains is also offered whole; a valid
+    selection is a union of booking units; and state stays per seat.
+  - *Whole prices* (§4.9.1). `wholePrice` and `wholePriceTier` on the
+    map, a section and a group, applying while the level's mode is
+    `whole` or `either`. A selection is priced from the outermost level
+    inwards, and a level is charged its whole price whenever the
+    selection covers it, however its seats were picked. §4.9's one
+    currency covers whole prices.
+  - *A reference implementation and a corpus.* `schema/booking.mjs`
+    (`bookingUnits`, `checkSelection`, `priceSelection`) and
+    `examples/booking-units/`, so that a seat picker and a booking engine
+    written in different languages test against the same cases; and
+    `checkSession`, which checks a session's overrides against its map.
+  - §6.2's love seat and §6.7's table are now groups, §6.8 is a new
+    lounge example, and §10's table kind is resolved.
+
+  **Removed.** `Seat.companions`, and with it §4.6's symmetry and
+  group-completeness rules. The member is reserved rather than merely
+  dropped: a validator MUST reject a seat that carries it (§4.12.4), since
+  a consumer that ignored it under §2 would sell a pair as two separate
+  seats. `Accessibility.companionRequired` now pairs with a group.
+
+  **Rejected.**
+
+  - *One wide seat for a sofa* (`Seat.width`, a `capacity`): every
+    per-person rule — state, seat counts, a per-booking limit,
+    accessibility per place, "seat 2 of the sofa" — would need a second
+    meaning.
+  - *An `Element` as the tabletop, linked from the group*: elements are
+    rectangles only, and two objects for one piece can drift apart.
+  - *Groups across sections, and nested groups*: a piece of furniture
+    stands in one zone, and a room and the venue are levels already.
+  - *Keeping `companions` beside groups*, with a precedence rule: still
+    two ways to say one thing, and the symmetric lists were the most
+    error-prone part of the format.
+  - *Booking modes on the map only*, which would need a copy of the room
+    for every event with different rules, and *on the session only*,
+    which would repeat a love seat's pairing in every session.
+  - *Overrides by group `kind`* ("every table whole"): overrides are by
+    id, and a tool expands a kind to ids.
+  - *A whole price only when a level is chosen explicitly whole*: a
+    cheaper table price would make picking seat by seat dearer for the
+    same seats, and a premium for exclusivity could be dodged by picking
+    seat by seat.
+  - *A `rect` row shape for seats round a rectangular table*: not yet.
+    Two `line` rows and the group's own `rect` are enough until an editor
+    needs to re-space one.
+
+  **Out of scope.** Selling a number of places without choosing which (a
+  pew sold as "four places, any"), how many seats one booking may hold,
+  gap rules, and what happens to holds when an override changes mid-sale.
+
+  **Migrating a rev 16 map** (non-normative). Each set of seats that list
+  one another in `companions` becomes one group in their section, with
+  `booking: "whole"` and a `kind` naming the piece — `companion` when there
+  is none — and every `companions` member is deleted. A table can then
+  gain a `circle` or `rect` shape for its top.
+
+  This is a breaking change, as rev 15 was: a rev 16 map that uses
+  `companions` is not valid under rev 17 until migrated, and one that does
+  not is unchanged. The schemas and package are versioned
+  `1.0.0-draft.17`.
 - **1.0.0-draft, rev 16** — Added seat forms, and wrote down which way a
   seat faces.
 

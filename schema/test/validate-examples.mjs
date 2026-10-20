@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createValidator, documentTypeFromFilename } from '../validator.mjs';
+import { runBookingCases } from './booking-cases.mjs';
 import { runSemanticCases } from './semantic-cases.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -37,7 +38,12 @@ const EXPECTED = {
   'dangling-seat-type.map.kerusi.json': [['seat-type-unresolved', '/sections/0/seats/0/type']],
   'dangling-price-tier.map.kerusi.json': [['seat-price-tier-unresolved', '/sections/0/seats/0/priceTier']],
   'dangling-row.map.kerusi.json': [['seat-row-unresolved', '/sections/0/seats/0/row']],
-  'asymmetric-companions.map.kerusi.json': [['companion-asymmetric', '/sections/0/seats/0/companions/0']],
+  'dangling-group-seat.map.kerusi.json': [['group-seat-unresolved', '/sections/0/groups/0/seats/1']],
+  'seat-in-two-groups.map.kerusi.json': [['group-seat-shared', '/sections/0/groups/1/seats/0']],
+  'duplicate-group-ids.map.kerusi.json': [['group-id-duplicate', '/sections/1/groups/0/id']],
+  'group-shape-outside-canvas.map.kerusi.json': [['group-shape-outside-canvas', '/sections/0/groups/0/shape/circle/center']],
+  'dangling-whole-price-tier.map.kerusi.json': [['whole-price-tier-unresolved', '/sections/0/groups/0/wholePriceTier']],
+  'whole-price-currency.map.kerusi.json': [['map-currency-mixed', '/sections/0/wholePrice/currency']],
   'seat-outside-canvas.map.kerusi.json': [['seat-outside-canvas', '/sections/0/seats/0/x']],
   'element-outside-canvas.map.kerusi.json': [['element-outside-canvas', '/sections/0/elements/0/y']],
   'duplicate-row-col.map.kerusi.json': [['seat-row-col-duplicate', '/sections/0/seats/1/col']],
@@ -151,6 +157,7 @@ checkValid();
 checkInvalid();
 checkValidatorOnly();
 failures += runSemanticCases();
+failures += runBookingCases(kerusi);
 
 if (failures > 0) {
   console.error(`\n${failures} failure(s).`);
