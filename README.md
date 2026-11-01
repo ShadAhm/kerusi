@@ -8,6 +8,8 @@ This repository holds the specification itself, plus the tooling that makes it m
 
 **Draft — open for comment.** The current draft is version `1.0.0-draft`, not yet finalized. See [§10 Open Issues](RFC/kerusi-standard_v1.0.0-draft.md#10-open-issues-for-the-10-release) for what's still unresolved before a stable 1.0 release.
 
+Kerusi is a proposed open standard, written and maintained by a single editor. No standards body (IETF, W3C or any other) has reviewed or endorsed it, and the `RFC/` folder name means "request for comments", not a numbered IETF RFC. Comments and questions are welcome as [issues](https://github.com/ShadAhm/kerusi/issues).
+
 ## The schemas and the validator
 
 🧪 [schema/](schema/) — draft 2020-12 JSON Schemas for `KerusiMap`, `KerusiSession`,
@@ -35,7 +37,7 @@ Key ideas covered in the spec:
 
 ## Contributing
 
-This is a specification under active draft review. To contribute:
+This is an open draft, and review from anyone who produces or renders seat maps is especially welcome. To contribute:
 
 1. Open an issue to discuss a proposed change before drafting spec text for anything non-trivial.
 2. For edits, fork the repository, edit [RFC/kerusi-standard_v1.0.0-draft.md](RFC/kerusi-standard_v1.0.0-draft.md), and open a pull request describing the rationale.
