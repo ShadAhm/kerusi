@@ -1,6 +1,6 @@
 # The Kerusi Seat Map and Availability Format
 
-**A vendor-neutral standard for describing seat maps and seat availability**
+**A proposed open standard for describing seat maps and seat availability**
 
 | | |
 |---|---|
@@ -30,6 +30,16 @@ public comment and subject to change prior to a final 1.0 release. A list
 of open questions that must be resolved before the format is declared
 stable appears in §10. Implementers should treat all interfaces described
 here as provisional until the draft status is lifted.
+
+Kerusi is an independent specification. It has not been submitted to,
+reviewed by, or endorsed by the IETF, W3C, or any other standards body,
+and the "RFC" in its repository and revision history means only "request
+for comments", not a numbered IETF RFC. It is currently written and
+maintained by a single editor.
+
+Comments, questions and proposed changes are welcome as issues at
+<https://github.com/ShadAhm/kerusi/issues>. Every normative change is
+recorded in §11.
 
 ## Conventions and Terminology
 
