@@ -37,13 +37,6 @@ and the "RFC" in its repository and revision history means only "request
 for comments", not a numbered IETF RFC. It is currently written and
 maintained by a single editor.
 
-The editor also builds [seatmapseasy.com](https://seatmapseasy.com), a
-product that produces and consumes Kerusi documents. That
-product is, at present, the only known implementation. The format is
-designed to be vendor-neutral, and nothing in it depends on or favours
-that product; independent implementations and review are especially
-welcome, and are what will make the vendor-neutral claim stick.
-
 Comments, questions and proposed changes are welcome as issues at
 <https://github.com/ShadAhm/kerusi/issues>. Every normative change is
 recorded in §11.
