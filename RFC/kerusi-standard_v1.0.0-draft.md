@@ -5,9 +5,9 @@
 | | |
 |---|---|
 | Version | 1.0.0-draft |
-| Revision | 17 (§11) |
+| Revision | 18 (§11) |
 | Status | Draft — open for comment |
-| Date | 2026-10-19 |
+| Date | 2026-11-03 |
 | Editor | Shad |
 
 ---
@@ -202,6 +202,8 @@ interface KerusiMap {
 interface Canvas {
   width: number;                // REQUIRED. Positive. Canvas units.
   height: number;               // REQUIRED. Positive. Same scale as width.
+  unit?: "mm" | "cm" | "m";     // The real length of one canvas unit, for a map
+                                  //   drawn to scale. Absent: abstract units (§4.5).
 }
 ```
 
@@ -570,11 +572,27 @@ reference to a row, and it has no neighbours.
 ### 4.5 The canvas
 
 `KerusiMap.canvas` is REQUIRED: `{ "width": number, "height": number }`,
-both positive. Its units are abstract, with the **same scale on both
-axes** — one unit across is one unit down — so a rotation, a circle, or an
-element's size means the same thing in a wide hall as in a square one.
-The origin is the top-left corner, `x` grows to the right, and `y` grows
-downwards.
+both positive. Its units have the **same scale on both axes** — one unit
+across is one unit down — so a rotation, a circle, or an element's size
+means the same thing in a wide hall as in a square one. The origin is the
+top-left corner, `x` grows to the right, and `y` grows downwards.
+
+`Canvas.unit` is OPTIONAL: `"mm"`, `"cm"` or `"m"`. When it is present,
+one canvas unit is that length in the venue, and the map is drawn to
+scale. Every canvas length is in that unit: the canvas's `width` and
+`height`, every `seatSize`, a seat's or an element's `x` and `y`, an
+element's `width` and `height`, a section's `bounds`, a row shape's points,
+centre and radius (§4.2.3), and a group's shape (§4.11). Angles stay in
+degrees. When `unit` is absent, the units are abstract and say nothing
+about real lengths. A producer SHOULD write `unit` only when the map's
+lengths are in fact measured, so that a tool can trust the distances it
+reports.
+
+`unit` changes nothing about drawing. A renderer MAY show real
+measurements — a scale bar, a ruler, the distance between two seats — and
+MUST NOT move, resize, or rescale anything in the canonical view because
+of it; the rules below apply to a map with a `unit` exactly as to one
+without.
 
 `KerusiMap.seatSize` is REQUIRED: a positive number of canvas units, the
 side of every seat's square footprint (§4.3.1). A section MAY override it
@@ -1729,7 +1747,7 @@ for hire — and a session that sells it differently for one night.
   "kerusi": "1.0",
   "id": "lounge",
   "name": "The Lounge",
-  "canvas": { "width": 1200, "height": 640 },
+  "canvas": { "width": 1200, "height": 640, "unit": "cm" },
   "seatSize": 40,
   "legend": [
     { "id": "loveseat", "label": "Love seat place", "form": "sofa", "defaultPriceTier": "premium" },
@@ -1843,6 +1861,10 @@ for hire — and a session that sells it differently for one night.
 }
 ```
 
+- **To scale** (§4.5). The canvas's `unit` is `"cm"`, so the room is
+  12 m by 6.4 m, each seat's footprint is 40 cm square, and `T1`'s
+  tabletop is a metre across. A renderer draws the map
+  exactly as it would without the `unit`, and MAY show those lengths.
 - **The pieces** (§4.11). Each piece of furniture is a group, and its
   shape is drawn under its seats: the love seat's, the sofa's and the
   pew's frames, the round tabletop of `T1`, and the private room's long
@@ -2043,6 +2065,38 @@ rev 17: a table is a group with a shape (§4.11), not an element.
 
 ## 11. Changelog
 
+- **1.0.0-draft, rev 18** — Added an optional real-world unit on the
+  canvas, for maps drawn to scale.
+
+  **Why.** Canvas units were abstract, so a map could not say that a unit
+  is a centimetre, and an editor that draws a room to scale had nowhere to
+  record it but its own `metadata`, which no other tool reads. With the
+  unit in the format, any Kerusi editor can reopen a to-scale map as one,
+  and any renderer or tool can show real distances.
+
+  **What changed.** `Canvas` gains an OPTIONAL `unit` — `"mm"`, `"cm"` or
+  `"m"` (§4.5). When present, every canvas length is in that unit; angles
+  are not lengths and stay in degrees. When absent, units are abstract, as
+  before. A renderer MAY show measurements and MUST NOT rescale the map
+  because of `unit`: it changes nothing about drawing. §6.8's lounge is
+  now drawn to scale in centimetres.
+
+  **Rejected.**
+
+  - *Imperial units*: a producer measuring in feet converts once, and
+    three metric units that differ only by powers of ten keep every tool's
+    arithmetic trivial.
+  - *A free-text unit*: a validator could not check it, and every
+    consumer would need its own list of spellings.
+  - *A scale factor* (units per metre): it says the same as the three
+    units for any map an editor draws, and is harder to read.
+  - *Leaving it in `metadata`*: invisible to every tool but the one that
+    wrote it, which is the problem this solves.
+
+  This is an additive change: every rev 17 map is valid under rev 18 and
+  means the same thing, and nothing is required of a producer that does
+  not write `unit`. The schemas and package are versioned
+  `1.0.0-draft.18`.
 - **1.0.0-draft, rev 17** — Added groups, booking modes and whole prices,
   and retired `companions`.
 

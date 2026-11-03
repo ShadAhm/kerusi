@@ -1,6 +1,6 @@
 /**
  * TypeScript interfaces for the Kerusi seat map and availability format,
- * v1.0.0-draft, rev 17 — a transcription of the declarations in sections 4
+ * v1.0.0-draft, rev 18 — a transcription of the declarations in sections 4
  * and 5 of RFC/kerusi-standard_v1.0.0-draft.md.
  *
  * Section 8 names `@kerusi/schema` (JSON Schema plus TypeScript types, no
@@ -67,6 +67,12 @@ export interface KerusiMap {
 export interface Canvas {
   width: number;
   height: number;
+  /**
+   * The real length of one canvas unit, for a map drawn to scale. Every canvas
+   * length is in this unit; angles stay in degrees. Absent: abstract units. It
+   * changes nothing about drawing (section 4.5).
+   */
+  unit?: 'mm' | 'cm' | 'm';
 }
 
 /** A rectangle on the canvas: top-left corner and size, in canvas units. */
