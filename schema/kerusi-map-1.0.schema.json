@@ -3,7 +3,7 @@
   "$id": "https://github.com/ShadAhm/kerusi/schema/kerusi-map-1.0.schema.json",
   "title": "Kerusi Map",
   "description": "A reusable physical seating configuration: one canvas, a seat size, legend, price tiers, sections, seats, and non-bookable elements (Kerusi v1.0, RFC section 4).",
-  "version": "1.0.0-draft.17",
+  "version": "1.0.0-draft.18",
   "type": "object",
   "required": [
     "kerusi",
@@ -115,7 +115,7 @@
     "Canvas": {
       "type": "object",
       "title": "Canvas",
-      "description": "The one drawing surface of a map (section 4.5). Abstract units with the same scale on both axes; the origin is the top-left corner, x grows to the right and y grows downwards.",
+      "description": "The one drawing surface of a map (section 4.5). Units with the same scale on both axes, abstract unless unit is given; the origin is the top-left corner, x grows to the right and y grows downwards.",
       "required": [
         "width",
         "height"
@@ -128,6 +128,15 @@
         "height": {
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "unit": {
+          "enum": [
+            "mm",
+            "cm",
+            "m"
+          ],
+          "description": "The real length of one canvas unit, for a map drawn to scale (section 4.5). Every canvas length is in this unit; angles stay in degrees. Absent: abstract units.",
+          "$comment": "Added in rev 18. It changes nothing about drawing: a renderer MAY show measurements and MUST NOT rescale the map because of it."
         }
       },
       "additionalProperties": false

@@ -4,7 +4,8 @@
   "name": "The Lounge",
   "canvas": {
     "width": 1200,
-    "height": 640
+    "height": 640,
+    "unit": "cm"
   },
   "seatSize": 40,
   "legend": [

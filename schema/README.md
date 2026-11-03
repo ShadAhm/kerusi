@@ -26,7 +26,7 @@ first and the semantic rules after it. See
 | [`booking.mjs`](booking.mjs) | Booking units, selections and selection prices (§4.9.1, §4.12): the reference implementation the [booking-units corpus](../examples/booking-units) is checked against. Dependency-free. |
 | [`kerusi-1.0.d.ts`](kerusi-1.0.d.ts) | TypeScript interfaces transcribed from §4–§5. Declarations only; they enforce nothing at runtime. |
 
-Each schema carries a `version` member (`"1.0.0-draft.17"`) naming the spec
+Each schema carries a `version` member (`"1.0.0-draft.18"`) naming the spec
 revision it tracks: `1.0.0-draft.<rev>`, where `<rev>` is the latest revision
 in the spec's §11 changelog, and the package version follows it. Documents
 themselves still declare `"kerusi": "1.0"` throughout the draft, so the schema
@@ -131,8 +131,9 @@ Three settings matter:
 - `kerusi: "1.0"` on all four document types (§7).
 - `additionalProperties: false` everywhere (§8) — see
   [Deliberate deviations](#deliberate-deviations).
-- The canvas (§4.5): `canvas` with a positive `width` and `height`, and a
-  positive `seatSize` on the map and on any section that overrides it.
+- The canvas (§4.5): `canvas` with a positive `width` and `height`, an
+  optional `unit` of `mm`, `cm` or `m`, and a positive `seatSize` on the map
+  and on any section that overrides it.
 - Positions (§4.3.1, §4.4.1): every seat and every element carries `x` and `y`,
   each at least 0. The upper bound — the canvas's `width` and `height` —
   belongs to the document, so the validator checks it.
@@ -270,11 +271,11 @@ registered extension.
   registered seat form, including a three-place sofa and a four-place pew; and
   a map whose only form is implementation-defined; a group of every registered
   kind, with `rect`, `circle` and no shape, and a group of one seat; and the
-  §6.8 lounge and its quiz-night session.
+  §6.8 lounge, drawn to scale in centimetres, and its quiz-night session.
 - `examples/invalid/` — documents that MUST NOT validate: missing required
   members (`canvas`, `seatSize`, `legend`, a seat's or an element's `x`/`y`), a
   wrong `kerusi` version, a bare top-level vendor field, a zero-width canvas, a
-  zero `seatSize`, a negative coordinate, a `col` of 0 and a `col` without a
+  canvas in an unknown unit, a zero `seatSize`, a negative coordinate, a `col` of 0 and a `col` without a
   `row`, an element addressed by `row`/`col`, a zero-width element, row shapes
   with two kinds, an unknown kind or a missing member, the removed `layout` and
   `aspectRatio` members, an empty seat `form`, a seat with the retired

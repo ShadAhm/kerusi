@@ -30,7 +30,7 @@ npm install && npm test
 Key ideas covered in the spec:
 
 - **Static/dynamic split** — a cacheable `KerusiMap` (layout) is separate from a frequently-updated `KerusiState` (availability), rather than one mutable structure.
-- **One canvas** — every seat has an `x`/`y` on a single canvas per map and a declared seat size, so every renderer draws the same map identically. `row`/`col` say only which seats are neighbours, and an optional line, arc or circle on a row records its intended shape for editors, so plain grids, curved rows, round tables, and stadium bowls are all the same kind of map.
+- **One canvas** — every seat has an `x`/`y` on a single canvas per map and a declared seat size, so every renderer draws the same map identically. A map drawn to scale can say its canvas units are millimetres, centimetres or metres. `row`/`col` say only which seats are neighbours, and an optional line, arc or circle on a row records its intended shape for editors, so plain grids, curved rows, round tables, and stadium bowls are all the same kind of map.
 - **Sections, pricing, seat types, and companion seats** — the structure needed once a layout goes beyond a single room.
 - **`KerusiStateDelta`** for incremental, real-time updates over a push transport (WebSocket, SSE), distinct from a full `KerusiState` snapshot.
 - **Migration notes** from a prior seat-picker implementation, `angularJs.keruC`.

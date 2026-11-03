@@ -1,0 +1,28 @@
+{
+  "kerusi": "1.0",
+  "id": "canvas-unit-unknown",
+  "canvas": {
+    "width": 100,
+    "height": 100,
+    "unit": "ft"
+  },
+  "seatSize": 10,
+  "legend": [
+    {
+      "id": "standard"
+    }
+  ],
+  "sections": [
+    {
+      "id": "s",
+      "seats": [
+        {
+          "id": "a",
+          "x": 50,
+          "y": 50,
+          "type": "standard"
+        }
+      ]
+    }
+  ]
+}
